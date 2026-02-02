@@ -1,0 +1,135 @@
+Your task is to modify and fix the existing app to support:
+
+Focused rollout in 3 Saudi cities
+
+Arabic & English language support
+
+Nearby café discovery using user location
+
+Distance-based sorting only (NO MAPS)
+
+Do not rebuild the app.
+
+1. Cities Scope (Strict)
+
+Limit café discovery to only:
+
+Jeddah
+
+Medina
+
+Riyadh
+
+No other cities should appear in the app.
+
+2. Café Data (CSV = Source of Truth)
+
+The static CSV contains:
+
+Café name (Arabic)
+
+Café name (English)
+
+Address (Arabic)
+
+Address (English)
+
+Latitude
+
+Longitude
+
+City
+
+Rules:
+
+Import CSV into the cafes table
+
+Preserve Arabic & English fields separately
+
+Do NOT auto-translate
+
+Do NOT use Google Places
+
+Deduplicate cafés using name + coordinates
+
+Prefer CSV data over any existing records
+
+3. Localization (Arabic & English)
+Language Handling
+
+Support Arabic (RTL) and English (LTR)
+
+Allow users to manually switch language
+
+Default language:
+
+Arabic if device language is Arabic
+
+English otherwise
+
+Content Rules
+
+UI text must be translated
+
+Café names & addresses:
+
+Arabic fields when app is Arabic
+
+English fields when app is English
+
+User-generated content (notes) must NOT be translated
+
+4. Location Permission & Nearby Cafés
+Location Access
+
+Request user permission to access location
+
+If permission is denied, show city-based list instead
+
+Nearby Logic
+
+Use user’s latitude & longitude
+
+Filter cafés by selected city
+
+Calculate distance using Haversine (or equivalent)
+
+Sort cafés by distance ASC
+
+Display distance in kilometers
+
+5. Café List UX (Important)
+
+Display priority:
+
+Nearby cafés (distance-sorted)
+
+City-based list fallback (if location unavailable)
+
+Rules:
+
+List-first experience
+
+No maps anywhere
+
+Clean, fast scrolling list
+
+6. Performance Rules
+
+Cache café lists per city
+
+Avoid recalculating distances on every render
+
+No unnecessary API calls
+
+7. Definition of Done
+
+App supports Arabic & English
+
+Only Jeddah, Medina, and Riyadh cafés appear
+
+Nearby cafés are sorted by distance
+
+Graceful fallback when location access is denied
+
+No map-related code exists
