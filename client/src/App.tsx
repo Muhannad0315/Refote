@@ -1,27 +1,37 @@
 import { Switch, Route } from "wouter";
-import { queryClient } from "./lib/queryClient";
+import { queryClient, setSessionInvalidHandler } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import AuthForm from "./components/auth-form";
-import React, { useState } from "react";
+import { SupabaseUnreachableBoundary } from "./components/supabase-unreachable-boundary";
+import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 // Note: AuthForm is used as the popup for both auth and account actions
 import { useAuth } from "@/lib/auth";
+import { useLocation } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { I18nProvider } from "@/lib/i18n";
 import { BottomNav } from "@/components/bottom-nav";
+import LegalFooter from "@/components/LegalFooter";
+import { LocalizedText } from "@/components/LocalizedText";
 import NotFound from "@/pages/not-found";
 // Home intentionally disabled — root redirects to Discover
 import Discover from "@/pages/discover";
+import Privacy from "@/pages/privacy";
+import Terms from "@/pages/terms";
+import Feedback from "@/pages/feedback";
 import CheckIn from "@/pages/check-in";
 import CafeDetail from "@/pages/cafe-detail";
 import Activity from "@/pages/activity";
 import Profile from "@/pages/profile";
 import ProfileComplete from "@/pages/profile-complete";
 import Signup from "@/pages/signup";
+import Login from "@/pages/login";
+import AuthReset from "@/pages/auth-reset";
+import Settings from "@/pages/settings";
 import UserPage from "@/pages/user";
 import UserFollowers from "@/pages/user-followers";
 import UserFollowing from "@/pages/user-following";
@@ -36,13 +46,41 @@ function Router() {
       <Route path="/activity" component={Activity} />
       <Route path="/profile/complete" component={ProfileComplete} />
       <Route path="/profile" component={Profile} />
+      <Route path="/settings" component={Settings} />
+      <Route path="/auth/reset" component={AuthReset} />
       <Route path="/signup" component={Signup} />
+      <Route path="/login" component={Login} />
       <Route path="/users/:id" component={UserPage} />
       <Route path="/users/:id/followers" component={UserFollowers} />
       <Route path="/users/:id/following" component={UserFollowing} />
+      <Route path="/privacy" component={Privacy} />
+      <Route path="/terms" component={Terms} />
+      <Route path="/feedback" component={Feedback} />
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+// Component that sets up SESSION_INVALID handler
+function SessionInvalidHandler() {
+  const [, setLocation] = useLocation();
+  const { signOut } = useAuth();
+
+  useEffect(() => {
+    // Set up handler for SESSION_INVALID errors
+    setSessionInvalidHandler(async () => {
+      try {
+        // Clear auth state by signing out
+        await signOut();
+      } catch (e) {
+        // Ignore errors during signOut (user may already be logged out)
+      }
+      // Redirect to login after auth state is cleared
+      setLocation("/login");
+    });
+  }, [setLocation, signOut]);
+
+  return null;
 }
 
 function AuthOpener() {
@@ -96,7 +134,7 @@ function AuthOpener() {
               alt={displayName}
               className="h-6 w-6 rounded-full object-cover"
             />
-            <span className="text-sm">{displayName}</span>
+            <LocalizedText className="text-sm">{displayName}</LocalizedText>
           </button>
         )}
         <AuthForm open={showAuth} onOpenChange={setShowAuth} />
@@ -133,14 +171,33 @@ function App() {
     <I18nProvider>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
-            <Toaster />
-            <div style={{ position: "fixed", top: 12, right: 12, zIndex: 60 }}>
-              <AuthOpener />
-            </div>
-            <Router />
-            <BottomNav />
-          </TooltipProvider>
+          <SupabaseUnreachableBoundary>
+            <TooltipProvider>
+              <Toaster />
+              <SessionInvalidHandler />
+              {/* Top-right Signup/Login opener temporarily disabled; re-enable when needed */}
+              {/*
+              <div style={{ position: "fixed", top: 12, right: 12, zIndex: 60 }}>
+                <AuthOpener />
+              </div>
+              */}
+              <div
+                className="min-h-screen"
+                style={{
+                  // Reserve space so page content is never hidden behind
+                  // the bottom navigation and the legal footer.
+                  paddingBottom:
+                    "calc(env(safe-area-inset-bottom) + var(--legal-footer-height, 48px) + 4rem)",
+                  // Define the footer height CSS variable (can be tuned)
+                  ["--legal-footer-height" as any]: "48px",
+                }}
+              >
+                <Router />
+              </div>
+              <LegalFooter />
+              <BottomNav />
+            </TooltipProvider>
+          </SupabaseUnreachableBoundary>
         </QueryClientProvider>
       </ThemeProvider>
     </I18nProvider>

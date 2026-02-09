@@ -10,25 +10,30 @@ export function BottomNav() {
   const { user } = useAuth();
 
   const navItems: Array<any> = [
-    // Home removed; Discover becomes first tab
+    // Discover is always available
     { icon: Search, labelKey: "nav.discover", path: "/discover" },
-    // Signup gets its own tab separate from Profile. Only show when no
-    // authenticated user exists.
-    ...(user
-      ? []
-      : [{ icon: UserPlus, labelKey: "Signup/Login", path: "/signup" }]),
+    // When unauthenticated, show explicit Login and Sign up tabs
+    ...(!user
+      ? [
+          { icon: User, labelKey: "auth.tabs.login", path: "/login" },
+          { icon: UserPlus, labelKey: "auth.tabs.signup", path: "/signup" },
+        ]
+      : []),
   ];
 
-  // Only show the Profile tab for authenticated users. Profile is a
-  // personal feature and must not be visible to unauthenticated viewers.
+  // Authenticated users see the Profile tab instead of auth tabs
   if (user) {
     navItems.push({ icon: User, labelKey: "nav.profile", path: "/profile" });
   }
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border"
+      className="fixed left-0 right-0 z-50 bg-background border-t border-border"
       dir={isRTL ? "rtl" : "ltr"}
+      style={{
+        bottom:
+          "calc(env(safe-area-inset-bottom) + var(--legal-footer-height, 48px))",
+      }}
     >
       <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-4">
         {navItems.map((item) => {
@@ -36,7 +41,7 @@ export function BottomNav() {
           const Icon = item.icon;
           // Prefer an explicit literal label when provided (signup), else
           // fall back to the i18n key. This keeps existing i18n behavior.
-          const label = (item as any).label ?? t((item as any).labelKey);
+          const label = t((item as any).labelKey);
 
           if ((item as any).isCenter) {
             return (

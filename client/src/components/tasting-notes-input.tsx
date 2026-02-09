@@ -4,6 +4,9 @@ import { X, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import LocalizedText, {
+  localizedClassForText,
+} from "@/components/LocalizedText";
 
 const commonTastingNotes = [
   "fruity",
@@ -81,10 +84,12 @@ export function TastingNotesInput({
           <div className="flex gap-2">
             <Input
               placeholder={t("tasting.addCustomNotePlaceholder")}
+              className={`flex-1 ${localizedClassForText(
+                t("tasting.addCustomNotePlaceholder"),
+              )}`}
               value={customNote}
               onChange={(e) => setCustomNote(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAddCustom()}
-              className="flex-1"
               data-testid="input-custom-note"
             />
             <Button
@@ -109,7 +114,7 @@ export function TastingNotesInput({
                 data-testid={`badge-note-available-${note}`}
               >
                 <Plus className="h-3 w-3 mr-1" />
-                {t(`note.${note}`) || note}
+                <LocalizedText>{t(`note.${note}`) || note}</LocalizedText>
               </Badge>
             ))}
           </div>
@@ -117,9 +122,11 @@ export function TastingNotesInput({
       )}
 
       <p className="text-xs text-muted-foreground">
-        {t("tasting.notesCount")
-          .replace("{count}", String(notes.length))
-          .replace("{max}", String(maxNotes))}
+        <LocalizedText>
+          {t("tasting.notesCount")
+            .replace("{count}", String(notes.length))
+            .replace("{max}", String(maxNotes))}
+        </LocalizedText>
       </p>
     </div>
   );

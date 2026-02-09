@@ -1,8 +1,11 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Edit2 } from "lucide-react";
+import { Edit2, LogOut, Settings } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { useAuth } from "@/lib/auth";
+import { useLocation } from "wouter";
 import type { UserProfile } from "@shared/schema";
+import { LocalizedText } from "@/components/LocalizedText";
 
 interface UserProfileHeaderProps {
   user: UserProfile;
@@ -20,6 +23,12 @@ export function UserProfileHeader({
   onEdit,
 }: UserProfileHeaderProps) {
   const { t } = useI18n();
+  const { signOut } = useAuth();
+  const [, setLocation] = useLocation();
+  const tr = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
   const displayName = user.displayName || "";
   const username = user.username || "";
   const avatarUrl = user.avatarUrl || undefined;
@@ -51,17 +60,46 @@ export function UserProfileHeader({
             </AvatarFallback>
           </Avatar>
 
-          <div className="flex items-center gap-2 mt-12">
+          <div className="flex flex-col items-center gap-2 mt-12">
             {isOwnProfile ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onEdit}
-                data-testid="button-edit-profile"
-              >
-                <Edit2 className="h-4 w-4 mr-2" />
-                {t("profile.editProfile") || t("common.edit") + " Profile"}
-              </Button>
+              <>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="min-w-[140px]"
+                  onClick={() => signOut()}
+                  data-testid="button-signout"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  <LocalizedText>
+                    {tr("common.signOut", "Sign Out")}
+                  </LocalizedText>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-w-[140px]"
+                  onClick={onEdit}
+                  data-testid="button-edit-profile"
+                >
+                  <Edit2 className="h-4 w-4 mr-2" />
+                  <LocalizedText>
+                    {tr("profile.editProfile", "Edit Profile")}
+                  </LocalizedText>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-w-[140px]"
+                  onClick={() => setLocation("/settings")}
+                  data-testid="button-settings"
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  <LocalizedText>
+                    {tr("settings.title", "Settings")}
+                  </LocalizedText>
+                </Button>
+              </>
             ) : (
               // optional follow button for other users; `onFollow` may be undefined
               <Button
@@ -69,28 +107,27 @@ export function UserProfileHeader({
                 onClick={onFollow}
                 data-testid="button-follow"
               >
-                {isFollowing ? t("common.following") : t("common.follow")}
+                <LocalizedText>
+                  {isFollowing ? t("common.following") : t("common.follow")}
+                </LocalizedText>
               </Button>
             )}
           </div>
         </div>
 
         <div className="mb-4">
-          <h1
-            className="font-serif text-2xl font-bold"
-            data-testid="text-display-name"
-          >
-            {displayName}
+          <h1 className="text-2xl font-bold" data-testid="text-display-name">
+            <LocalizedText>{displayName}</LocalizedText>
           </h1>
           <p
             className="text-muted-foreground text-sm"
             data-testid="text-username"
           >
-            @{username}
+            @<LocalizedText>{username}</LocalizedText>
           </p>
           {user.bio && (
             <p className="mt-2 text-sm" data-testid="text-bio">
-              {user.bio}
+              <LocalizedText>{user.bio}</LocalizedText>
             </p>
           )}
         </div>

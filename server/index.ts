@@ -71,28 +71,17 @@ app.use((req, res, next) => {
   const serverApiKey = process.env.GOOGLE_API_KEY;
   if (!serverApiKey) {
     console.error(
-      "Cafnote: Startup failed — GOOGLE_API_KEY missing or Places API unavailable",
+      "Refote: Startup failed — GOOGLE_API_KEY missing or Places API unavailable",
     );
     process.exit(1);
   } else {
     // console.log(
-    //   "Cafnote: Using Google Places API as the ONLY cafe data source",
+    //   "Refote: Using Google Places API as the ONLY cafe data source",
     // );
   }
 
-  // TEMPORARY: log the hard-coded test location used for all Places queries
-  // This is intentionally prominent so it's obvious the app is in test mode.
-  try {
-    const { getTestLocation } = await import("./test-location");
-    const loc = getTestLocation();
-    if (loc && loc.lat && loc.lng) {
-      // console.log(
-      //   `Cafnote: Using TEMPORARY test location (${loc.lat}, ${loc.lng})`,
-      // );
-    }
-  } catch (_) {
-    // ignore if module not present
-  }
+  // Note: Do not load `server/test-location` at startup — dev location overrides
+  // are evaluated per-request to avoid caching and silent fallbacks.
 
   // Ensure `photo_reference` column exists in `coffee_places` (helpful for first-run)
   try {

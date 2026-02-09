@@ -5,10 +5,12 @@ import { CafeCard } from "@/components/cafe-card";
 // Roasters removed
 import { CafeCardSkeleton } from "@/components/loading-skeleton";
 import { EmptyState } from "@/components/empty-state";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { LanguageToggle } from "@/components/language-toggle";
+import TopHeader from "@/components/top-header";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
+import { useAuth } from "@/lib/auth";
+import { localizedClassForText } from "@/components/LocalizedText";
+import LocalizedText from "@/components/LocalizedText";
 import {
   requestUserLocation,
   calculateHaversineDistance,
@@ -16,9 +18,34 @@ import {
 } from "@/lib/location";
 import { getLocationCell } from "../../../shared/locationCell";
 import { DEFAULT_SEARCH_RADIUS_METERS } from "../../../shared/searchConstants";
-import { Search as SearchIcon, Flame, MapPin, Navigation } from "lucide-react";
+import {
+  Search as SearchIcon,
+  Flame,
+  MapPin,
+  Navigation,
+  ChevronDown,
+} from "lucide-react";
 import type { Cafe, CafeWithDistance } from "@shared/schema";
 // city translations removed — filters not used
+
+// Detect US locale; all others default to metric
+const isUSLocale = () => {
+  const lang = navigator.language || "en";
+  return lang.toLowerCase().startsWith("en-us");
+};
+
+// Distance options: unified meter-primary labels with approx miles
+const DISTANCE_OPTIONS = [
+  { label: "discover.distance.500", meters: 500 },
+  { label: "discover.distance.1000", meters: 1000 },
+  { label: "discover.distance.1500", meters: 1500 },
+  { label: "discover.distance.3000", meters: 3000 },
+];
+
+// Get default radius (500m for all locales)
+const getDefaultRadius = () => {
+  return 500;
+};
 
 export default function Discover() {
   const { t, language, isRTL } = useI18n();
@@ -26,19 +53,50 @@ export default function Discover() {
   // City filters removed — Discover now uses nearby Places only
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<
-    "idle" | "requesting" | "granted" | "denied"
+    "idle" | "requesting" | "granted" | "denied" | "error"
   >("idle");
+  const { user } = useAuth();
+  const [devOverrideActive, setDevOverrideActive] = useState(false);
   const [activeTab, setActiveTab] = useState<"cafes">("cafes");
+
+  // Locale detection and distance selector
+  const isUS = isUSLocale();
+
+  // Initialize radius from localStorage or use default
+  // Only accept stored values if they match current DISTANCE_OPTIONS
+  const [radiusMeters, setRadiusMeters] = useState<number>(() => {
+    const stored = localStorage.getItem("discover-radius");
+    if (stored) {
+      const parsed = parseInt(stored, 10);
+      // Only use stored value if it's a valid option in current DISTANCE_OPTIONS
+      if (!isNaN(parsed) && DISTANCE_OPTIONS.some((o) => o.meters === parsed)) {
+        return parsed;
+      }
+      // Clear invalid stored value
+      localStorage.removeItem("discover-radius");
+    }
+    return getDefaultRadius();
+  });
+
+  // Persist radius to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem("discover-radius", String(radiusMeters));
+  }, [radiusMeters]);
 
   // Compute a coarse location cell for caching/de-duplication. The server
   // uses the same cell logic; including these values in the query key ensures
   // cached results are keyed by location cell and radius.
-  const RADIUS_METERS = DEFAULT_SEARCH_RADIUS_METERS;
+  const RADIUS_METERS = radiusMeters;
   const { latCell, lngCell } = userLocation
     ? getLocationCell(userLocation.latitude, userLocation.longitude)
     : { latCell: null as number | null, lngCell: null as number | null };
 
-  const { data: cafes, isLoading: cafesLoading } = useQuery<Cafe[]>({
+  const {
+    data: cafes,
+    isLoading: cafesLoading,
+    error: cafesError,
+    refetch: refetchCafes,
+  } = useQuery<Cafe[]>({
     // Query key includes location cell + radius so different coarse locations
     // have separate cache entries. Using a stable key prevents refetches when
     // UI interactions (clicks) happen elsewhere on the page.
@@ -46,6 +104,14 @@ export default function Discover() {
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("lang", language === "ar" ? "ar" : "en");
+      params.set("radius_m", String(RADIUS_METERS));
+      // Include lat/lng only when we have userLocation. If dev override is
+      // active and client has no geolocation, omit lat/lng so server will use
+      // the server-side override.
+      if (userLocation) {
+        params.set("lat", String(userLocation.latitude));
+        params.set("lng", String(userLocation.longitude));
+      }
 
       const url = `/api/cafes?${params.toString()}`;
       const res = await fetch(url);
@@ -62,6 +128,10 @@ export default function Discover() {
     // when user actions genuinely change data.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    // Only enable the query when the browser has granted geolocation OR the
+    // server-side dev override is active. This prevents accidental calls when
+    // the client does not have coords and the server will reject the request.
+    enabled: !!userLocation || devOverrideActive,
   });
 
   // roasters removed
@@ -73,13 +143,45 @@ export default function Discover() {
       setUserLocation(location);
       setLocationStatus("granted");
     } catch {
-      setLocationStatus("denied");
+      // Try to detect whether the failure was a permission denial
+      try {
+        await new Promise((_, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            () => reject(new Error("unexpected-success")),
+            (err) => reject(err),
+            { timeout: 5000 },
+          );
+        });
+      } catch (err: any) {
+        const code = err?.code;
+        if (code === 1) setLocationStatus("denied");
+        else setLocationStatus("error");
+      }
     }
   }, []);
 
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
+
+  // Check server dev override status so Discover can run when temp_location
+  // is enabled on the server even if the browser has no geolocation.
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/dev-location-status");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (mounted) setDevOverrideActive(!!json?.enabled);
+      } catch (_) {
+        if (mounted) setDevOverrideActive(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const cafesWithDistance = useMemo((): CafeWithDistance[] => {
     if (!cafes) return [];
@@ -150,57 +252,47 @@ export default function Discover() {
       className="min-h-screen bg-background pb-20"
       dir={isRTL ? "rtl" : "ltr"}
     >
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-        <div className="relative">
-          <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-            <a
-              href="/"
-              className="pointer-events-auto font-serif text-xl font-bold"
-            >
-              Cafnote
-            </a>
-          </div>
-          <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-            <div
-              className={
-                isRTL
-                  ? "order-2 flex items-center gap-2"
-                  : "order-1 flex items-center gap-2"
-              }
-            >
-              <SearchIcon className="h-4 w-4 text-primary" />
-              <h1 className="font-serif text-lg">{t("nav.discover")}</h1>
-            </div>
-            <div
-              className={
-                isRTL
-                  ? "order-1 flex items-center gap-1"
-                  : "order-2 flex items-center gap-1"
-              }
-            >
-              <LanguageToggle />
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </header>
+      <TopHeader
+        titleKey="nav.discover"
+        leftIcon={<SearchIcon className="h-4 w-4 text-primary" />}
+      />
 
       <main className="max-w-2xl mx-auto px-4 py-4">
-        {locationStatus === "denied" && (
-          <div className="mb-4 p-3 rounded-md bg-muted text-muted-foreground text-sm flex items-center gap-2">
-            <MapPin className="h-4 w-4 flex-shrink-0" />
-            <span>{t("discover.locationDenied")}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={requestLocation}
-              className="ms-auto"
-              data-testid="button-retry-location"
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
-        )}
+        {/* Removed duplicate denied banner — keep only the enable-location prompt below */}
+
+        {/* Single location prompt: show only when user has NO coords, not using
+            server dev override, and the user is signed in (not logged out).
+            Text varies by permission state (denied vs required). */}
+        {(() => {
+          const { user } = useAuth();
+          const showBanner = !devOverrideActive && !userLocation && !!user;
+          if (!showBanner) return null;
+
+          const messageKey =
+            locationStatus === "denied"
+              ? "discover.locationDenied"
+              : locationStatus === "error"
+              ? "discover.locationError"
+              : "discover.locationRequired";
+
+          return (
+            <div className="mb-4 p-3 rounded-md bg-muted text-muted-foreground text-sm flex items-center gap-2">
+              <MapPin className="h-4 w-4 flex-shrink-0" />
+              <span>
+                <LocalizedText>{t(messageKey)}</LocalizedText>
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={requestLocation}
+                className="ms-auto"
+                data-testid="button-request-location"
+              >
+                <LocalizedText>{t("discover.enableLocation")}</LocalizedText>
+              </Button>
+            </div>
+          );
+        })()}
 
         <div className="flex gap-2 mb-4">
           <Button
@@ -210,7 +302,7 @@ export default function Discover() {
             data-testid="tab-cafes"
           >
             <SearchIcon className="h-4 w-4 me-2" />
-            {t("discover.cafes")}
+            <LocalizedText>{t("discover.cafes")}</LocalizedText>
           </Button>
           {/* roasters tab removed */}
         </div>
@@ -223,12 +315,63 @@ export default function Discover() {
           />
         </div>
 
+        {/* Distance Selector */}
+        <div className="mb-4 flex items-center gap-2">
+          <label htmlFor="distance-select" className="text-sm font-medium">
+            <LocalizedText>{t("discover.distance")}</LocalizedText>:
+          </label>
+          <div className="relative">
+            <select
+              id="distance-select"
+              value={radiusMeters}
+              onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))}
+              className={`appearance-none bg-background border border-border rounded-md px-3 py-2 text-sm pr-8 cursor-pointer hover:bg-muted/50 transition-colors ${localizedClassForText(
+                t(
+                  DISTANCE_OPTIONS.find((o) => o.meters === radiusMeters)
+                    ?.label || "",
+                ),
+              )}`}
+              data-testid="distance-selector"
+            >
+              {DISTANCE_OPTIONS.map((option) => (
+                <option
+                  key={option.meters}
+                  value={option.meters}
+                  className={localizedClassForText(t(option.label))}
+                >
+                  {t(option.label)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 pointer-events-none text-muted-foreground" />
+          </div>
+        </div>
+
         {activeTab === "cafes" && (
           <>
             {userLocation && (
               <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
                 <Navigation className="h-4 w-4 text-primary" />
-                <span>{t("discover.nearYou")}</span>
+                <span>
+                  <LocalizedText>{t("discover.nearYou")}</LocalizedText>
+                </span>
+              </div>
+            )}
+
+            {/* Service unavailable error state */}
+            {cafesError && (
+              <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                <p className="text-sm text-amber-900 dark:text-amber-100 mb-3">
+                  We're having trouble connecting right now. Please check your
+                  internet connection or try again in a moment.
+                </p>
+                <Button
+                  onClick={() => refetchCafes()}
+                  className="w-full"
+                  size="sm"
+                >
+                  Retry
+                </Button>
               </div>
             )}
 
@@ -238,7 +381,7 @@ export default function Discover() {
                   <CafeCardSkeleton key={i} />
                 ))}
               </div>
-            ) : filteredCafes && filteredCafes.length > 0 ? (
+            ) : !cafesError && filteredCafes && filteredCafes.length > 0 ? (
               <div className="space-y-3">
                 {/*
                   Pagination is purely client-side and works on the already-

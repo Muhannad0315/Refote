@@ -17,6 +17,9 @@ import {
 } from "@/components/ui/popover";
 import type { Cafe } from "@shared/schema";
 import { useI18n } from "@/lib/i18n";
+import LocalizedText, {
+  localizedClassForText,
+} from "@/components/LocalizedText";
 
 interface LocationSelectorProps {
   cafes: Cafe[];
@@ -79,26 +82,40 @@ export function LocationSelector({
                         setOpen(false);
                       }}
                     >
-                      {language === "ar"
-                        ? (selectedLocation as Cafe).nameAr
-                        : (selectedLocation as Cafe).nameEn}
+                      <LocalizedText>
+                        {language === "ar"
+                          ? (selectedLocation as Cafe).nameAr
+                          : (selectedLocation as Cafe).nameEn}
+                      </LocalizedText>
                     </Link>
                   ) : (
                     (selectedLocation as any).name
                   )}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {selectedType === "cafe"
-                    ? language === "ar"
-                      ? (selectedLocation as Cafe).cityAr
-                      : (selectedLocation as Cafe).cityEn
-                    : (selectedLocation as any).location}
+                  {selectedType === "cafe" ? (
+                    <LocalizedText>
+                      {language === "ar"
+                        ? (selectedLocation as Cafe).cityAr
+                        : (selectedLocation as Cafe).cityEn}
+                    </LocalizedText>
+                  ) : (
+                    <LocalizedText>
+                      {(selectedLocation as any).location}
+                    </LocalizedText>
+                  )}
                 </div>
               </div>
             </div>
           ) : (
-            <span className="text-muted-foreground">
-              {language === "ar" ? "اختر الموقع" : "Select a location..."}
+            <span
+              className={`text-muted-foreground ${localizedClassForText(
+                language === "ar" ? "اختر الموقع" : "Select a location...",
+              )}`}
+            >
+              <LocalizedText>
+                {language === "ar" ? "اختر الموقع" : "Select a location..."}
+              </LocalizedText>
             </span>
           )}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -110,13 +127,18 @@ export function LocationSelector({
             placeholder={
               language === "ar" ? "ابحث عن المواقع..." : "Search locations..."
             }
+            className={localizedClassForText(
+              language === "ar" ? "ابحث عن المواقع..." : "Search locations...",
+            )}
             value={search}
             onValueChange={setSearch}
             data-testid="input-location-search"
           />
           <CommandList>
             <CommandEmpty>
-              {language === "ar" ? "لا توجد مواقع." : "No locations found."}
+              <LocalizedText>
+                {language === "ar" ? "لا توجد مواقع." : "No locations found."}
+              </LocalizedText>
             </CommandEmpty>
 
             {filteredCafes.length > 0 && (
@@ -133,9 +155,15 @@ export function LocationSelector({
                   >
                     <Coffee className="h-4 w-4 mr-2 text-primary" />
                     <div className="flex-1">
-                      <div>{language === "ar" ? cafe.nameAr : cafe.nameEn}</div>
+                      <div>
+                        <LocalizedText>
+                          {language === "ar" ? cafe.nameAr : cafe.nameEn}
+                        </LocalizedText>
+                      </div>
                       <div className="text-xs text-muted-foreground">
-                        {language === "ar" ? cafe.cityAr : cafe.cityEn}
+                        <LocalizedText>
+                          {language === "ar" ? cafe.cityAr : cafe.cityEn}
+                        </LocalizedText>
                       </div>
                     </div>
                     {selectedCafe?.id === cafe.id && (

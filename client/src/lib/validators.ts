@@ -11,7 +11,7 @@ export const RESERVED_USERNAMES = new Set([
   "discover",
   "profile",
   "settings",
-  "cafnote",
+  "refote",
 ]);
 
 export function validateUsername(input: string) {

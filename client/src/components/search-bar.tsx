@@ -1,5 +1,6 @@
 import { Search, X, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { localizedClassForText } from "@/components/LocalizedText";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
@@ -43,7 +44,7 @@ export function SearchBar({
             placeholder={placeholder}
             value={localValue}
             onChange={handleChange}
-            className="pl-10 pr-10"
+            className={`pl-10 pr-10 ${localizedClassForText(placeholder)}`}
             data-testid="input-search"
           />
           {localValue && (

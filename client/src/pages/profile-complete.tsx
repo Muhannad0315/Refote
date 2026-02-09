@@ -5,18 +5,29 @@ import { useForm } from "react-hook-form";
 import { useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getUserFriendlyErrorMessage } from "@/lib/errorUtils";
 import { useMutation } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import LocalizedText, {
+  localizedClassForText,
+} from "@/components/LocalizedText";
+import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
+import { Link } from "wouter";
+import { PhotoUpload } from "@/components/photo-upload.canonical";
 import { validateUsername } from "@/lib/validators";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { LanguageToggle } from "@/components/language-toggle";
+import TopHeader from "@/components/top-header";
+import BackButton from "@/components/back-button";
+import supabase from "@/lib/supabaseClient";
 
 export default function ProfileComplete() {
   const { t } = useI18n();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [, setLocation] = useLocation();
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useQuery<UserProfile>({
     queryKey: ["/api/profile"],
@@ -27,11 +38,17 @@ export default function ProfileComplete() {
     enabled: !!user,
   });
 
+  // Cooldown timer for resend button
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
   const form = useForm<any>({
     defaultValues: { username: "", displayName: "", bio: "", avatarUrl: "" },
   });
   const watchedUsername = form.watch("username");
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const [usernameValid, setUsernameValid] = useState(false);
   const [usernameChecking, setUsernameChecking] = useState(false);
@@ -57,20 +74,16 @@ export default function ProfileComplete() {
       setUsernameValid(false);
       setUsernameAvailable(null);
       setUsernameChecking(false);
-      if (reason === "length")
-        setUsernameMessage("Username must be 3–20 characters");
+      if (reason === "length") setUsernameMessage(t("signup.username.length"));
       else if (reason === "reserved")
-        setUsernameMessage("This username is reserved");
-      else
-        setUsernameMessage(
-          "Only lowercase letters, numbers, . and _ allowed; cannot start or end with . or _",
-        );
+        setUsernameMessage(t("signup.username.reserved"));
+      else setUsernameMessage(t("signup.username.invalidChars"));
       return;
     }
 
     setUsernameValid(true);
     setUsernameChecking(true);
-    setUsernameMessage("Checking availability...");
+    setUsernameMessage(t("signup.username.checking"));
     setUsernameAvailable(null);
 
     const timer = setTimeout(async () => {
@@ -83,19 +96,19 @@ export default function ProfileComplete() {
         if (!isActive) return;
         if (data.available) {
           setUsernameAvailable(true);
-          setUsernameMessage("Username available ✅");
+          setUsernameMessage(t("signup.username.available"));
         } else {
           setUsernameAvailable(false);
           if (data.reason === "taken")
-            setUsernameMessage("Username already taken ❌");
+            setUsernameMessage(t("signup.username.taken"));
           else if (data.reason === "reserved")
-            setUsernameMessage("This username is reserved ❌");
-          else setUsernameMessage("Username not available ❌");
+            setUsernameMessage(t("signup.username.reserved"));
+          else setUsernameMessage(t("signup.username.notAvailable"));
         }
       } catch (e) {
         if (!isActive) return;
         setUsernameAvailable(false);
-        setUsernameMessage("Error checking username");
+        setUsernameMessage(t("signup.username.errorChecking"));
       } finally {
         if (isActive) setUsernameChecking(false);
       }
@@ -122,6 +135,44 @@ export default function ProfileComplete() {
       setLocation("/discover");
     },
   });
+
+  // Handle resend confirmation email with rate-limit handling
+  const handleResendConfirmation = async () => {
+    setResendLoading(true);
+    setResendError(null);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: user?.email || "",
+      });
+
+      if (error) {
+        // Handle rate-limit errors with friendly message
+        if (
+          error.message?.includes("rate") ||
+          error.message?.includes("too many")
+        ) {
+          setResendError(t("profile.resendTooMany"));
+        } else {
+          setResendError(t("profile.resendFailed"));
+        }
+      } else {
+        // Start cooldown after successful resend
+        setResendCooldown(60);
+        setResendError(null);
+      }
+    } catch (err: any) {
+      setResendError(getUserFriendlyErrorMessage(err));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  // Handle sign out
+  const handleSignOut = async () => {
+    await signOut();
+    setLocation("/login");
+  };
 
   useEffect(() => {
     // Routing & access control:
@@ -151,36 +202,82 @@ export default function ProfileComplete() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-        <div className="relative">
-          <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-            <a
-              href="/"
-              className="pointer-events-auto font-serif text-xl font-bold"
-            >
-              Cafnote
-            </a>
-          </div>
-          <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-            <div />
-            <div className="flex items-center gap-1">
-              <LanguageToggle />
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </header>
+      <TopHeader titleKey="profile.completeTitle" />
+      <BackButton href="/discover" />
 
       <main className="max-w-2xl mx-auto p-4">
-        <h2 className="text-xl font-semibold mb-4">Complete your profile</h2>
+        {/* Email Confirmation Blocked Message */}
+        {!user?.email_confirmed_at && (
+          <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
+              <LocalizedText>{t("profile.confirmEmailTitle")}</LocalizedText>
+            </h3>
+            <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
+              <LocalizedText>{t("profile.confirmEmailBody")}</LocalizedText>
+              <span className="font-medium">{user?.email}</span>.
+            </p>
+
+            <p className="text-xs text-blue-700 dark:text-blue-300 mb-4">
+              <strong>
+                <LocalizedText>{t("profile.didntSeeEmail")}</LocalizedText>
+              </strong>{" "}
+              <LocalizedText>{t("profile.checkSpam")}</LocalizedText>
+            </p>
+
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResendConfirmation}
+                disabled={resendCooldown > 0 || resendLoading}
+                className="w-full"
+              >
+                <LocalizedText>
+                  {resendCooldown > 0
+                    ? `${t("profile.resendIn")} ${resendCooldown}s`
+                    : resendLoading
+                    ? t("profile.sending")
+                    : t("profile.resendConfirmationEmail")}
+                </LocalizedText>
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSignOut}
+                className="w-full"
+              >
+                <LocalizedText>{t("auth.signOut")}</LocalizedText>
+              </Button>
+            </div>
+
+            {resendError && (
+              <p className="text-xs text-blue-700 dark:text-blue-300 mt-3 bg-blue-100 dark:bg-blue-950/40 p-2 rounded">
+                {resendError}
+              </p>
+            )}
+          </div>
+        )}
+
+        <h2 className="text-xl font-semibold mb-4">
+          <LocalizedText>{t("profile.completeTitle")}</LocalizedText>
+        </h2>
         <p className="mb-4">
-          Please choose a username and complete your profile.
+          <LocalizedText>{t("profile.completeDescription")}</LocalizedText>
         </p>
         <div className="space-y-3">
           <div>
-            <Input {...form.register("username")} placeholder="Username" />
+            <Input
+              {...form.register("username")}
+              placeholder={t("profile.usernamePlaceholder")}
+              className={localizedClassForText(
+                t("profile.usernamePlaceholder"),
+              )}
+            />
             <div className="text-xs mt-1 text-muted-foreground">
-              {usernameMessage || "e.g. brew.john or john_coffee"}
+              <LocalizedText>
+                {usernameMessage || t("profile.usernameExample")}
+              </LocalizedText>
             </div>
           </div>
 
@@ -188,57 +285,29 @@ export default function ProfileComplete() {
             <Input
               {...form.register("displayName")}
               placeholder={t("profile.displayNamePlaceholder")}
+              className={localizedClassForText(
+                t("profile.displayNamePlaceholder"),
+              )}
             />
           </div>
 
           <div>
             <div className="text-sm font-medium mb-2">
-              {t("profile.avatarLabel")}
+              <LocalizedText>{t("profile.avatarLabel")}</LocalizedText>
             </div>
 
-            <input
-              ref={avatarInputRef}
-              id="avatar-input"
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => {
-                    const result = reader.result as string;
-                    form.setValue("avatarUrl", result);
-                  };
-                  reader.readAsDataURL(file);
-                }
-              }}
-              data-testid="input-avatar-form"
+            <PhotoUpload
+              photoUrl={form.watch("avatarUrl")}
+              onPhotoChange={(url) => form.setValue("avatarUrl", url)}
+              title={t("profile.avatarLabel")}
+              hint={t("photo.dragDrop")}
             />
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
-                onClick={() => avatarInputRef.current?.click()}
-              >
-                {t("common.changePhoto")}
-              </button>
-              {form.watch("avatarUrl") && (
-                <button
-                  type="button"
-                  className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
-                  onClick={() => form.setValue("avatarUrl", "")}
-                >
-                  {t("common.remove")}
-                </button>
-              )}
-            </div>
           </div>
 
           <Textarea
             {...form.register("bio")}
             placeholder={t("profile.bioPlaceholder")}
+            className={localizedClassForText(t("profile.bioPlaceholder"))}
           />
 
           <div className="flex gap-2">
@@ -259,8 +328,20 @@ export default function ProfileComplete() {
               }}
               disabled={!usernameValid || usernameAvailable !== true}
             >
-              {usernameChecking ? "Checking..." : t("common.save")}
+              <LocalizedText>
+                {usernameChecking ? t("common.loading") : t("common.save")}
+              </LocalizedText>
             </button>
+
+            <Button
+              variant="outline"
+              onClick={async () => {
+                await signOut();
+                setLocation("/signup");
+              }}
+            >
+              <LocalizedText>{t("auth.signOut")}</LocalizedText>
+            </Button>
           </div>
         </div>
       </main>

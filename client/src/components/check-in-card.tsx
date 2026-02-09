@@ -13,12 +13,15 @@ import {
 } from "@/components/ui/dialog";
 import { RatingStars } from "./rating-stars";
 import { Link } from "wouter";
+import { useRequireAuth } from "@/lib/useRequireAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { CheckInWithDetails, UserProfile } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { formatDistanceToNow } from "date-fns";
+import { LocalizedText } from "./LocalizedText";
 
 interface CheckInCardProps {
   checkIn: CheckInWithDetails;
@@ -26,9 +29,13 @@ interface CheckInCardProps {
 
 export function CheckInCard({ checkIn }: CheckInCardProps) {
   const { language, t, isRTL } = useI18n();
+  const requireAuth = useRequireAuth();
+  const { user } = useAuth();
 
   const { data: profile } = useQuery<UserProfile>({
     queryKey: ["/api/profile"],
+    // Do not fetch the canonical profile when unauthenticated to avoid 401s
+    enabled: !!user,
   });
   const canEdit = profile?.id && profile.id === checkIn.user?.id;
 
@@ -40,6 +47,11 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
 
   const handleDeleteConfirmed = async () => {
     try {
+      const ok = await requireAuth();
+      if (!ok) {
+        setConfirmOpen(false);
+        return;
+      }
       await apiRequest("DELETE", `/api/check-ins/${checkIn.id}`);
       queryClient.invalidateQueries({ queryKey: ["/api/check-ins"] });
       queryClient.invalidateQueries({ queryKey: ["/api/profile/check-ins"] });
@@ -106,7 +118,7 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                     className="font-semibold text-sm cursor-pointer hover:underline"
                     data-testid={`text-username-${checkIn.id}`}
                   >
-                    {checkIn.user.displayName}
+                    <LocalizedText>{checkIn.user.displayName}</LocalizedText>
                   </span>
                 </Link>
                 <span className="text-muted-foreground text-xs">
@@ -117,17 +129,22 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                {t("checkIn.isDrinking")}
+                <LocalizedText>{t("checkIn.isDrinking")}</LocalizedText>
               </p>
             </div>
           </div>
         </div>
 
         <h3
-          className="font-serif text-xl font-medium mb-2"
+          className="text-xl font-medium mb-2"
           data-testid={`text-drink-${checkIn.id}`}
         >
-          {t(`drink.${checkIn.drink.id}`) || checkIn.drink.name}
+          <LocalizedText>{checkIn.drink.name}</LocalizedText>
+          {(checkIn as any).temperature && (
+            <span className="text-sm text-muted-foreground ml-2">
+              ({(checkIn as any).temperature})
+            </span>
+          )}
         </h3>
 
         <div className="flex items-center gap-2 mb-3">
@@ -151,9 +168,13 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
               data-testid={`button-location-${checkIn.id}`}
             >
               <MapPin className="h-4 w-4" />
-              <span>{locationName}</span>
+              <span>
+                <LocalizedText>{locationName}</LocalizedText>
+              </span>
               {locationCity && (
-                <span className="text-xs">· {locationCity}</span>
+                <span className="text-xs">
+                  · <LocalizedText>{locationCity}</LocalizedText>
+                </span>
               )}
             </Link>
           ) : (
@@ -164,9 +185,11 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
               data-testid={`button-location-${checkIn.id}`}
             >
               <MapPin className="h-4 w-4" />
-              <span>{locationName}</span>
+              <LocalizedText>{locationName}</LocalizedText>
               {locationCity && (
-                <span className="text-xs">· {locationCity}</span>
+                <span className="text-xs">
+                  · <LocalizedText>{locationCity}</LocalizedText>
+                </span>
               )}
             </button>
           )}
@@ -182,7 +205,7 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                 data-testid={`badge-tasting-${checkIn.id}-${index}`}
               >
                 <Coffee className={`h-3 w-3 ${isRTL ? "ml-1" : "mr-1"}`} />
-                {t(`note.${note}`) || note}
+                <LocalizedText>{t(`note.${note}`) || note}</LocalizedText>
               </Badge>
             ))}
           </div>
@@ -207,8 +230,15 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                     variant="ghost"
                     size="sm"
                     data-testid={`button-edit-${checkIn.id}`}
+                    onClick={async (e) => {
+                      const ok = await requireAuth();
+                      if (!ok) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }
+                    }}
                   >
-                    {t("common.edit")}
+                    <LocalizedText>{t("common.edit")}</LocalizedText>
                   </Button>
                 </Link>
                 <Button
@@ -217,7 +247,7 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                   onClick={() => setConfirmOpen(true)}
                   data-testid={`button-delete-${checkIn.id}`}
                 >
-                  {t("common.delete")}
+                  <LocalizedText>{t("common.delete")}</LocalizedText>
                 </Button>
               </>
             )}
@@ -225,9 +255,13 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
           <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>{t("confirm.deleteCheckIn")}</DialogTitle>
+                <DialogTitle>
+                  <LocalizedText>{t("confirm.deleteCheckIn")}</LocalizedText>
+                </DialogTitle>
                 <DialogDescription>
-                  {t("confirm.deleteCheckInDescription")}
+                  <LocalizedText>
+                    {t("confirm.deleteCheckInDescription")}
+                  </LocalizedText>
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -236,10 +270,10 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                     variant="outline"
                     onClick={() => setConfirmOpen(false)}
                   >
-                    {t("common.cancel")}
+                    <LocalizedText>{t("common.cancel")}</LocalizedText>
                   </Button>
                   <Button variant="destructive" onClick={handleDeleteConfirmed}>
-                    {t("common.delete")}
+                    <LocalizedText>{t("common.delete")}</LocalizedText>
                   </Button>
                 </div>
               </DialogFooter>

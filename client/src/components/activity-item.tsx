@@ -2,6 +2,7 @@ import { Heart, UserPlus, Coffee } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNow } from "date-fns";
 import { useI18n } from "@/lib/i18n";
+import LocalizedText from "@/components/LocalizedText";
 
 type ActivityType = "like" | "follow" | "checkin";
 
@@ -43,18 +44,7 @@ export function ActivityItem({
   const config = activityConfig[type];
   const Icon = config.icon;
 
-  const getMessage = () => {
-    if (type === "like") {
-      return target
-        ? `${t("activity.likedYour")} ${target}`
-        : t("activity.likedYour");
-    }
-    if (type === "follow") return t("activity.followedYou");
-    if (type === "checkin")
-      return target ? `${t("checkIn.title")} ${target}` : t("checkIn.title");
-    // badges are hidden
-    return "";
-  };
+  // message rendering in JSX so we can apply localized font to dynamic targets
 
   return (
     <button
@@ -78,8 +68,18 @@ export function ActivityItem({
 
       <div className="flex-1 min-w-0">
         <p className="text-sm">
-          <span className="font-semibold">{user.displayName}</span>{" "}
-          <span className="text-muted-foreground">{getMessage()}</span>
+          <LocalizedText className="font-semibold" text={user.displayName} />{" "}
+          <span className="text-muted-foreground">
+            {type === "like" && t("activity.likedYour")}
+            {type === "follow" && t("activity.followedYou")}
+            {type === "checkin" && t("checkIn.title")}
+            {target ? (
+              <>
+                {" "}
+                <LocalizedText text={target} />
+              </>
+            ) : null}
+          </span>
         </p>
         <p className="text-xs text-muted-foreground mt-1">
           {formatDistanceToNow(timestamp, { addSuffix: true })}

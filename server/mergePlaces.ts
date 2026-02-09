@@ -1,4 +1,5 @@
 // Accept raw Google API results (various shapes) and return a strict
+// Accept raw Google API results (various shapes) and return a strict
 // canonical shape suitable for persistence. This function never returns
 // Google-native objects; it only returns simplified canonical entries.
 
@@ -13,6 +14,7 @@ type CanonicalPlaceOut = {
   photo_reference?: string | null;
   city_en?: string | null;
   city_ar?: string | null;
+  country?: string | null;
 };
 
 function extractId(p: any): string | null {
@@ -41,6 +43,25 @@ function extractLng(p: any): number | null {
   const fromTop = p.longitude;
   if (typeof fromTop === "number") return fromTop;
   const fromRaw = p.raw?.geometry?.location?.lng;
+  if (typeof fromRaw === "number") return fromRaw;
+  return null;
+}
+
+function extractRating(p: any): number | null {
+  if (!p) return null;
+  const fromTop = p.rating;
+  if (typeof fromTop === "number") return fromTop;
+  const fromRaw = p.raw?.rating;
+  if (typeof fromRaw === "number") return fromRaw;
+  return null;
+}
+
+function extractReviews(p: any): number | null {
+  if (!p) return null;
+  const fromTop = p.user_ratings_total ?? p.reviews ?? p.userRatingsTotal;
+  if (typeof fromTop === "number") return fromTop;
+  const fromRaw =
+    p.raw?.user_ratings_total ?? p.raw?.reviews ?? p.raw?.userRatingsTotal;
   if (typeof fromRaw === "number") return fromRaw;
   return null;
 }
@@ -82,42 +103,11 @@ export function mergePlaces(
 ): CanonicalPlaceOut[] {
   const map = new Map<string, CanonicalPlaceOut>();
 
-  // STEP 3H logging: input counts and samples (MANDATORY)
-  try {
-    console.log("mergePlaces input counts", {
-      en: (enResults || []).length,
-      ar: (arResults || []).length,
-    });
-    try {
-      if (enResults && enResults.length > 0)
-        console.log(
-          "mergePlaces EN sample",
-          JSON.stringify(enResults[0], null, 2),
-        );
-    } catch (_) {}
-    try {
-      if (arResults && arResults.length > 0)
-        console.log(
-          "mergePlaces AR sample",
-          JSON.stringify(arResults[0], null, 2),
-        );
-    } catch (_) {}
-  } catch (_) {}
-
   // First pass: anchor on English results — populate canonical fields
   for (const p of enResults || []) {
     if (!p) continue;
     const { id, lat, lng, valid } = extractCanonicalFromRaw(p);
     if (!valid) {
-      try {
-        const reason = !id ? "missing_id" : "missing_coords";
-        console.log("mergePlaces skip", {
-          reason,
-          place_id: id ?? null,
-          lat: lat ?? null,
-          lng: lng ?? null,
-        });
-      } catch (_) {}
       continue;
     }
 
@@ -131,6 +121,8 @@ export function mergePlaces(
       null;
     const raw = p.raw ?? (p || {});
     const city = pickCityFromRaw(raw);
+    const rating = extractRating(p);
+    const reviews = extractReviews(p);
 
     const entry: CanonicalPlaceOut = {
       google_place_id: String(id),
@@ -139,7 +131,11 @@ export function mergePlaces(
       name_en: nameEn ?? null,
       photo_reference: photoRef ?? null,
       city_en: city ?? null,
+      country: (p.country ?? null) as string | null,
     };
+    // Only include rating/reviews if they were actually extracted from Google
+    if (rating !== null) entry.rating = rating;
+    if (reviews !== null) entry.reviews = reviews;
     map.set(String(id), entry);
   }
 
@@ -151,12 +147,6 @@ export function mergePlaces(
 
     const id = extractId(p);
     if (!id) {
-      try {
-        console.log("mergePlaces skip", {
-          reason: "missing_id",
-          place_id: null,
-        });
-      } catch (_) {}
       continue;
     }
 
@@ -178,7 +168,13 @@ export function mergePlaces(
           existing.photo_reference = photoRef;
         const raw = p.raw ?? (p || {});
         const cityAr = pickCityFromRaw(raw);
+        const rating = extractRating(p);
+        const reviews = extractReviews(p);
+        if (!existing.rating && rating) existing.rating = rating;
+        if (!existing.reviews && reviews) existing.reviews = reviews;
         if (!existing.city_ar && cityAr) existing.city_ar = cityAr;
+        if (!existing.country && (p.country ?? null))
+          existing.country = p.country;
         // If existing lacks coords and AR provides them, fill them in
         const lat = extractLat(p);
         const lng = extractLng(p);
@@ -200,14 +196,6 @@ export function mergePlaces(
     const lat = extractLat(p);
     const lng = extractLng(p);
     if (lat === null || lng === null) {
-      try {
-        console.log("mergePlaces skip", {
-          reason: "missing_coords",
-          place_id: id,
-          lat: lat ?? null,
-          lng: lng ?? null,
-        });
-      } catch (_) {}
       continue;
     }
 
@@ -221,14 +209,19 @@ export function mergePlaces(
       null;
     const raw = p.raw ?? (p || {});
     const cityAr = pickCityFromRaw(raw);
+    const rating = extractRating(p);
+    const reviews = extractReviews(p);
 
     const entry: CanonicalPlaceOut = {
       google_place_id: String(id),
       lat: Number(lat),
       lng: Number(lng),
       name_ar: nameAr ?? null,
+      rating: rating ?? null,
+      reviews: reviews ?? null,
       photo_reference: photoRef ?? null,
       city_ar: cityAr ?? null,
+      country: (p.country ?? null) as string | null,
     };
     map.set(String(id), entry);
   }
@@ -241,13 +234,6 @@ export function mergePlaces(
     if (v.lng === undefined || v.lng === null) continue;
     out.push(v);
   }
-
-  try {
-    console.log(`[mergePlaces] returning ${out.length} canonical places`);
-  } catch (_) {}
-  try {
-    console.log("mergePlaces output count", out.length);
-  } catch (_) {}
 
   return out;
 }

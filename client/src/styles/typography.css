@@ -1,0 +1,71 @@
+:root {
+  --font-latin: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-arabic: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Map Tailwind font tokens to the canonical latin font tokens so utilities
+     like `font-sans` / `font-serif` reference the single source of truth. */
+  --font-sans: var(--font-latin);
+  --font-serif: var(--font-latin);
+  --font-mono: var(--font-latin);
+}
+
+/* Utility classes used by LocalizedText (single source of truth for fonts) */
+.localized-font-latin {
+  font-family: var(--font-latin) !important;
+}
+
+.localized-font-arabic {
+  font-family: var(--font-arabic) !important;
+}
+
+/* Default body font should come from the typography authority only */
+body {
+  font-family: var(--font-latin) !important;
+}
+
+/* Automatically switch global body font based on html language attribute.
+   This keeps the single source of truth for fonts in CSS variables and
+   avoids inline styles. When `lang="ar"` is present on the <html> element,
+   use the Arabic font for the entire document. */
+html[lang="ar"] body {
+  font-family: var(--font-arabic) !important;
+}
+
+html[lang="en"] body {
+  font-family: var(--font-latin) !important;
+}
+
+/* Form controls should inherit the canonical latin font by default. */
+input,
+textarea,
+select,
+button {
+  font-family: var(--font-sans) !important;
+}
+
+/* Ensure options inherit the font of their parent control. */
+select,
+select option {
+  font-family: var(--font-sans) !important;
+}
+
+/* Placeholder text should inherit the element's font-family so localized classes work. */
+input::placeholder,
+textarea::placeholder {
+  font-family: inherit !important;
+}
+
+/* When a localized utility class is applied to a form control, make sure
+   placeholder text also receives the same font. */
+input.localized-font-arabic::placeholder,
+textarea.localized-font-arabic::placeholder,
+select.localized-font-arabic::placeholder {
+  font-family: var(--font-arabic) !important;
+}
+
+input.localized-font-latin::placeholder,
+textarea.localized-font-latin::placeholder,
+select.localized-font-latin::placeholder {
+  font-family: var(--font-latin) !important;
+}

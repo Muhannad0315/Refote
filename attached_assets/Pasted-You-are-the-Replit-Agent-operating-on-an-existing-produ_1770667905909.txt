@@ -1,0 +1,105 @@
+You are the Replit Agent operating on an existing production-ready app.
+
+Your task is to perform a FULL SECURITY & COMPLIANCE AUDIT for Replit deployment.
+This is NOT a feature task. This is NOT a refactor unless required for security.
+
+You have permission to READ, FLAG, and RECOMMEND changes.
+DO NOT remove functionality unless it is a security risk.
+DO NOT break authentication, signup, login, feedback, or email flows.
+
+────────────────────────────────────
+OBJECTIVES
+────────────────────────────────────
+
+1. Replit Compliance
+   - Verify the app complies with Replit deployment standards.
+   - Identify anything that could cause deployment failure or policy violations.
+
+2. Secrets & Sensitive Data
+   - Ensure NO secrets are exposed to the client.
+   - Check for:
+     - API keys
+     - Supabase keys
+     - Resend keys
+     - Google API keys
+     - SMTP credentials
+     - Service role keys
+   - Confirm all sensitive values are:
+     - Stored ONLY in server-side environment variables
+     - NOT referenced in client-side code
+     - NOT hardcoded anywhere in the repo
+
+3. Client vs Server Boundary
+   - Confirm:
+     - Server-only logic stays server-side
+     - Client bundle does not leak environment variables
+     - No `process.env.*` used improperly in frontend files
+     - No secrets in JSON, constants, utils, or config files accessible to client
+
+4. Authentication Safety
+   - Verify Supabase auth usage is secure:
+     - No service_role key in client
+     - Admin functions only on server
+     - Email confirmation logic is server-side
+   - Confirm no auth bypass paths exist
+
+5. Email & Feedback Security
+   - Confirm Resend usage:
+     - API key server-only
+     - From / To addresses are safe
+     - No open relay risks
+   - Ensure feedback endpoint:
+     - Validates input
+     - Cannot be abused anonymously at scale
+     - Does not expose internal stack traces to users
+
+6. Logging
+   - Confirm logs:
+     - Do NOT expose secrets
+     - Do NOT expose internal IDs or auth tokens
+     - Are server-only
+     - Are safe for production
+
+7. Files & Repo Hygiene
+   - Identify:
+     - Unused files
+     - Old configs
+     - Test keys
+     - Debug utilities
+     - Dead code paths
+   - Flag (do NOT delete unless required) anything suspicious
+
+────────────────────────────────────
+OUTPUT FORMAT (IMPORTANT)
+────────────────────────────────────
+
+Return your findings in this exact structure:
+
+SECURITY STATUS:
+- Overall Risk Level: LOW / MEDIUM / HIGH
+
+FINDINGS:
+- [SEVERITY] Description
+- File(s) involved
+- Why this is a risk
+- Recommended fix (do NOT apply unless critical)
+
+REPLIT COMPLIANCE CHECK:
+- ✅ Passed items
+- ⚠️ Items needing attention
+
+CONFIRMATION:
+- Explicitly state whether the app is SAFE to deploy on Replit
+- If NOT safe, list blocking issues only
+
+────────────────────────────────────
+RULES
+────────────────────────────────────
+
+- DO NOT modify code automatically.
+- DO NOT introduce new dependencies.
+- DO NOT refactor UI or logic unless it is a security requirement.
+- DO NOT expose secrets in your response.
+- This audit must be safe to read in plain text.
+
+This is the FINAL security gate before deployment.

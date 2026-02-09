@@ -1,10 +1,10 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+if (!SUPABASE_URL || (!SUPABASE_SERVICE_KEY && !SUPABASE_ANON_KEY)) {
   // eslint-disable-next-line no-console
   console.warn(
     "Server Supabase client not fully configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in server/.env",
@@ -16,10 +16,30 @@ export function createServerSupabaseClient(token?: string): SupabaseClient {
   // Supabase treats the request as coming from that user (RLS applies).
   const global: any = {};
   if (token) {
+    try {
+      token = String(token)
+        .replace(/^Bearer\s+/i, "")
+        .trim();
+    } catch (_) {}
     global.headers = { Authorization: `Bearer ${token}` };
   }
 
-  return createClient(SUPABASE_URL as string, SUPABASE_SERVICE_KEY as string, {
+  // Use the anon/public key when creating a client to act as an end-user
+  // (i.e., when a user token is provided). The service role key should be
+  // reserved for server-only privileged operations.
+  const keyToUse = token
+    ? SUPABASE_ANON_KEY || SUPABASE_SERVICE_KEY
+    : SUPABASE_SERVICE_KEY || SUPABASE_ANON_KEY;
+
+  // reduced logging: only warn if no key is configured
+  try {
+    if (process.env.NODE_ENV !== "production" && !keyToUse) {
+      // eslint-disable-next-line no-console
+      console.warn("createServerSupabaseClient: missing Supabase key");
+    }
+  } catch (_) {}
+
+  return createClient(SUPABASE_URL as string, keyToUse as string, {
     global,
     auth: { persistSession: false },
   });

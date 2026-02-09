@@ -2,6 +2,7 @@ import { Coffee, Search, Bell, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { useI18n } from "@/lib/i18n";
+import LocalizedText from "@/components/LocalizedText";
 
 interface EmptyStateProps {
   type: "feed" | "search" | "activity" | "profile" | "custom";
@@ -15,39 +16,36 @@ interface EmptyStateProps {
 const defaultConfigs = {
   feed: {
     icon: <Coffee className="h-12 w-12" />,
-    title: "Your feed is empty",
-    description:
-      "Start by checking in your first drink or follow other coffee lovers!",
-    actionLabel: "Check In Now",
-    actionHref: "/check-in",
+    title: undefined,
+    description: undefined,
+    actionLabel: undefined,
+    actionHref: undefined,
   },
   search: {
     icon: <Search className="h-12 w-12" />,
-    title: "No results found",
-    description:
-      "Try adjusting your search or filters to find what you're looking for.",
+    title: undefined,
+    description: undefined,
     actionLabel: undefined,
     actionHref: undefined,
   },
   activity: {
     icon: <Bell className="h-12 w-12" />,
-    title: "No activity yet",
-    description:
-      "When people interact with your check-ins, you'll see it here.",
-    actionLabel: "Explore Cafés",
-    actionHref: "/discover",
+    title: undefined,
+    description: undefined,
+    actionLabel: undefined,
+    actionHref: undefined,
   },
   profile: {
     icon: <User className="h-12 w-12" />,
-    title: "No check-ins yet",
-    description: "Start your coffee journey by checking in your first drink!",
-    actionLabel: "Check In Now",
-    actionHref: "/check-in",
+    title: undefined,
+    description: undefined,
+    actionLabel: undefined,
+    actionHref: undefined,
   },
   custom: {
     icon: <Coffee className="h-12 w-12" />,
-    title: "Nothing here",
-    description: "Check back later for updates.",
+    title: undefined,
+    description: undefined,
     actionLabel: undefined,
     actionHref: undefined,
   },
@@ -73,6 +71,8 @@ export function EmptyState({
       ? t("activity.noActivity")
       : type === "search"
       ? t("common.noResults")
+      : type === "custom"
+      ? t("empty.nothingHere")
       : config.title);
 
   const finalDescription =
@@ -81,6 +81,8 @@ export function EmptyState({
       ? t("home.noCheckInsDescription")
       : type === "feed"
       ? t("feed.emptyDescription")
+      : type === "custom"
+      ? t("empty.checkBackLater")
       : config.description);
 
   const finalActionLabel =
@@ -101,14 +103,18 @@ export function EmptyState({
       <div className="p-6 rounded-full bg-muted/50 text-muted-foreground mb-4">
         {finalIcon}
       </div>
-      <h3 className="font-serif text-xl font-medium mb-2">{finalTitle}</h3>
+      <h3 className="text-xl font-medium mb-2">
+        <LocalizedText>{finalTitle}</LocalizedText>
+      </h3>
       <p className="text-muted-foreground text-sm max-w-xs mb-6">
-        {finalDescription}
+        <LocalizedText>{finalDescription}</LocalizedText>
       </p>
 
       {finalActionLabel && finalActionHref && (
         <Link href={finalActionHref}>
-          <Button data-testid="button-empty-action">{finalActionLabel}</Button>
+          <Button data-testid="button-empty-action">
+            <LocalizedText>{finalActionLabel}</LocalizedText>
+          </Button>
         </Link>
       )}
     </div>

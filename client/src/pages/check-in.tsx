@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -16,25 +16,62 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { DrinkSelector } from "@/components/drink-selector";
-import { LocationSelector } from "@/components/location-selector";
-import { RatingStars } from "@/components/rating-stars";
-import { TastingNotesInput } from "@/components/tasting-notes-input";
-import { PhotoUpload } from "@/components/photo-upload";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { LanguageToggle } from "@/components/language-toggle";
-import { useI18n } from "@/lib/i18n";
+import { PhotoUpload } from "@/components/photo-upload.canonical";
+import supabase from "@/lib/supabaseClient";
 import { useToast } from "@/hooks/use-toast";
+import { useI18n } from "@/lib/i18n";
+import { localizedClassForText } from "@/components/LocalizedText";
+import LocalizedText from "@/components/LocalizedText";
+import TopHeader from "@/components/top-header";
+import BackButton from "@/components/back-button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Input } from "@/components/ui/input";
+// Language and theme toggles are provided by TopHeader
+import { DrinkSelector } from "@/components/drink-selector";
+import { RatingStars } from "@/components/rating-stars";
+import { LocationSelector } from "@/components/location-selector";
+import { TastingNotesInput } from "@/components/tasting-notes-input";
+import { useRequireAuth } from "@/lib/useRequireAuth";
 import type { Drink, Cafe, CheckInWithDetails } from "@shared/schema";
 
 export default function CheckIn() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { t, language, isRTL } = useI18n();
+  const handleMutationError = (err: unknown, fallbackDescription: string) => {
+    try {
+      const raw = String((err as any)?.message ?? err ?? "");
+      const match = raw.match(/^(\d{3}):\s*(.*)$/);
+      const status = match ? Number(match[1]) : null;
+      const body = match ? match[2] : raw;
+      let message = body || fallbackDescription;
+      try {
+        const parsed = JSON.parse(body);
+        message = parsed?.error || parsed?.message || message;
+      } catch (_) {
+        // not JSON — keep body as-is
+      }
+      toast({
+        title: t("common.error"),
+        description: message || fallbackDescription,
+        variant: "destructive",
+      });
+      if (status === 403) {
+        navigate("/profile/complete");
+      }
+    } catch (e) {
+      toast({
+        title: t("common.error"),
+        description: fallbackDescription,
+        variant: "destructive",
+      });
+    }
+  };
+  const requireAuth = useRequireAuth();
   // Build the form schema with localized validation messages
   const checkInFormSchema = z.object({
-    drinkId: z.string().min(1, t("validation.selectDrink")),
+    drinkId: z.string().min(1, t("validation.selectDrink")), // Now stores drink name
+    temperature: z.enum(["Hot", "Cold"]), // Required temperature
     rating: z.number().min(0.5, t("validation.rateDrink")).max(5),
     notes: z.string().optional(),
     tastingNotes: z.array(z.string()).optional(),
@@ -43,8 +80,12 @@ export default function CheckIn() {
   });
 
   type CheckInFormValues = z.infer<typeof checkInFormSchema>;
-  const [selectedDrink, setSelectedDrink] = useState<Drink | undefined>();
+  const [selectedDrinkName, setSelectedDrinkName] = useState<
+    string | undefined
+  >();
   const [selectedCafe, setSelectedCafe] = useState<Cafe | undefined>();
+  const [photoUploadError, setPhotoUploadError] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState<boolean>(false);
 
   const { data: drinks = [] } = useQuery<Drink[]>({
     queryKey: ["/api/drinks"],
@@ -106,6 +147,7 @@ export default function CheckIn() {
     resolver: zodResolver(checkInFormSchema),
     defaultValues: {
       drinkId: "",
+      temperature: undefined,
       rating: 0,
       notes: "",
       tastingNotes: [],
@@ -125,10 +167,10 @@ export default function CheckIn() {
     queryKey: ["/api/check-ins", editId],
     enabled: Boolean(editId),
     queryFn: async () => {
-      const res = await fetch(
+      const res = await apiRequest(
+        "GET",
         `/api/check-ins/${encodeURIComponent(editId || "")}`,
       );
-      if (!res.ok) throw new Error("Failed to load check-in");
       return (await res.json()) as CheckInWithDetails;
     },
   });
@@ -136,15 +178,13 @@ export default function CheckIn() {
   useEffect(() => {
     if (!editCheckIn) return;
     const data = editCheckIn;
-    // populate form
-    setSelectedDrink({
-      id: data.drink.id,
-      name: data.drink.name,
-      type: data.drink.type,
-      style: data.drink.style,
-      description: data.drink.description,
-    } as any);
-    form.setValue("drinkId", data.drink.id);
+    // populate form with drink name (not ID) and other fields
+    setSelectedDrinkName(data.drink.name);
+    form.setValue("drinkId", data.drink.name);
+    const temp = (data as any).temperature as "Hot" | "Cold" | undefined;
+    if (temp !== undefined) {
+      form.setValue("temperature", temp as "Hot" | "Cold");
+    }
     form.setValue("rating", data.rating);
     form.setValue("notes", data.notes || "");
     form.setValue("tastingNotes", data.tastingNotes || []);
@@ -163,7 +203,23 @@ export default function CheckIn() {
       id: string;
       values: CheckInFormValues;
     }) => {
+      // ensure we have an access token before calling protected API
+      try {
+        const session = await supabase.auth.getSession();
+        // removed verbose session debug
+        const token = session?.data?.session?.access_token;
+        if (!token) throw new Error('401: {"error":"Missing auth token"}');
+      } catch (e) {
+        throw new Error('401: {"error":"Missing auth token"}');
+      }
       const payload: any = { ...values };
+      try {
+        console.info("updateCheckIn payload (before API):", {
+          drinkId: payload.drinkId,
+          temperature: payload.temperature,
+          rating: payload.rating,
+        });
+      } catch (_) {}
       if (selectedCafe) {
         payload.cafe = {
           placeId: selectedCafe.placeId ?? selectedCafe.id,
@@ -193,7 +249,8 @@ export default function CheckIn() {
           specialty: null,
         };
       }
-      return apiRequest("PUT", `/api/check-ins/${id}`, payload);
+      const res = await apiRequest("PUT", `/api/check-ins/${id}`, payload);
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/check-ins"] });
@@ -211,25 +268,34 @@ export default function CheckIn() {
         });
       }
       toast({
-        title: language === "ar" ? "تم التحديث!" : "Check-in updated!",
+        title: t("checkIn.updated"),
       });
       navigate("/");
     },
-    onError: () => {
-      toast({
-        title: language === "ar" ? "خطأ" : "Error",
-        description:
-          language === "ar"
-            ? "فشل في تحديث التسجيل. حاول مرة أخرى."
-            : "Failed to update check-in. Please try again.",
-        variant: "destructive",
-      });
+    onError: (err: unknown) => {
+      handleMutationError(err, t("error.updateCheckIn"));
     },
   });
 
   const createCheckInMutation = useMutation({
     mutationFn: async (values: CheckInFormValues) => {
+      // ensure we have an access token before calling protected API
+      try {
+        const session = await supabase.auth.getSession();
+        const token = session?.data?.session?.access_token;
+        if (!token) throw new Error('401: {"error":"Missing auth token"}');
+      } catch (e) {
+        throw new Error('401: {"error":"Missing auth token"}');
+      }
+
       const payload: any = { ...values };
+      try {
+        console.info("createCheckIn payload (before API):", {
+          drinkId: payload.drinkId,
+          temperature: payload.temperature,
+          rating: payload.rating,
+        });
+      } catch (_) {}
       if (selectedCafe) {
         payload.cafe = {
           placeId: selectedCafe.placeId ?? selectedCafe.id,
@@ -259,7 +325,8 @@ export default function CheckIn() {
           specialty: null,
         };
       }
-      return apiRequest("POST", "/api/check-ins", payload);
+      const res = await apiRequest("POST", "/api/check-ins", payload);
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/check-ins"] });
@@ -277,23 +344,13 @@ export default function CheckIn() {
         });
       }
       toast({
-        title: language === "ar" ? "تم التسجيل!" : "Check-in complete!",
-        description:
-          language === "ar"
-            ? "تم تسجيل مشروبك بنجاح."
-            : "Your drink has been logged successfully.",
+        title: t("checkIn.createdTitle"),
+        description: t("checkIn.createdDescription"),
       });
       navigate("/");
     },
-    onError: () => {
-      toast({
-        title: language === "ar" ? "خطأ" : "Error",
-        description:
-          language === "ar"
-            ? "فشل في إنشاء التسجيل. حاول مرة أخرى."
-            : "Failed to create check-in. Please try again.",
-        variant: "destructive",
-      });
+    onError: (err: unknown) => {
+      handleMutationError(err, t("error.createCheckIn"));
     },
   });
 
@@ -310,15 +367,19 @@ export default function CheckIn() {
     },
     onSuccess: (data: Drink) => {
       queryClient.invalidateQueries({ queryKey: ["/api/drinks"] });
-      setSelectedDrink(data);
-      form.setValue("drinkId", data.id);
+      // Use the drink name from the response (display name)
+      const displayName = data.name;
+      setSelectedDrinkName(displayName);
+      form.setValue("drinkId", displayName);
     },
   });
 
-  const handleDrinkSelect = (drink: Drink) => {
-    setSelectedDrink(drink);
-    form.setValue("drinkId", drink.id);
+  const handleDrinkSelect = (drinkName: string) => {
+    setSelectedDrinkName(drinkName);
+    form.setValue("drinkId", drinkName);
   };
+
+  const temperatureValue = form.watch("temperature");
 
   const handleCafeSelect = (cafe: Cafe) => {
     setSelectedCafe(cafe);
@@ -333,7 +394,25 @@ export default function CheckIn() {
     createDrinkMutation.mutate({ name, type });
   };
 
-  const onSubmit = (values: CheckInFormValues) => {
+  const onSubmit = async (values: CheckInFormValues) => {
+    const ok = await requireAuth();
+    if (!ok) return;
+    if (photoUploading) {
+      toast({
+        title: t("photo.uploadInProgressTitle"),
+        description: t("photo.uploadInProgressDescription"),
+        variant: "destructive",
+      });
+      return;
+    }
+    if (photoUploadError) {
+      toast({
+        title: t("photo.uploadErrorTitle"),
+        description: photoUploadError,
+        variant: "destructive",
+      });
+      return;
+    }
     if (editId) {
       updateCheckInMutation.mutate({ id: editId, values });
     } else {
@@ -341,45 +420,25 @@ export default function CheckIn() {
     }
   };
 
+  // If the user landed directly on the check-in page, ensure unauthenticated
+  // visitors are redirected to signup only after auth state is resolved.
+  useEffect(() => {
+    (async () => {
+      await requireAuth();
+    })();
+  }, []);
+
   return (
     <div
       className="min-h-screen bg-background pb-20"
       dir={isRTL ? "rtl" : "ltr"}
     >
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-        <div className="relative">
-          <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-            <a
-              href="/"
-              className="pointer-events-auto font-serif text-xl font-bold"
-            >
-              Cafnote
-            </a>
-          </div>
-          <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => navigate("/")}
-                data-testid="button-back"
-              >
-                <ArrowLeft className={`h-5 w-5 ${isRTL ? "rotate-180" : ""}`} />
-              </Button>
-              <h1
-                className="font-serif text-xl font-bold"
-                data-testid="text-checkin-title"
-              >
-                {t("checkIn.title")}
-              </h1>
-            </div>
-            <div className="flex items-center gap-1">
-              <LanguageToggle />
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </header>
+      <TopHeader
+        title={t("checkIn.title")}
+        leftIcon={<Check className="h-4 w-4 text-primary" />}
+      />
+      {/* Back button must live below the header (not inside it) */}
+      <BackButton onClick={() => navigate("/")} testId="button-back" />
 
       <main className="max-w-2xl mx-auto px-4 py-6">
         <Form {...form}>
@@ -399,17 +458,18 @@ export default function CheckIn() {
                 </FormItem>
               )}
             />
-
             <FormField
               control={form.control}
               name="drinkId"
               render={() => (
                 <FormItem>
-                  <FormLabel>{t("checkIn.selectDrink")}</FormLabel>
+                  <FormLabel>
+                    <LocalizedText>{t("checkIn.selectDrink")}</LocalizedText>
+                  </FormLabel>
                   <FormControl>
                     <DrinkSelector
                       drinks={drinks}
-                      selectedDrink={selectedDrink}
+                      selectedDrinkName={selectedDrinkName}
                       onSelect={handleDrinkSelect}
                       onCreateNew={handleCreateDrink}
                     />
@@ -421,10 +481,55 @@ export default function CheckIn() {
 
             <FormField
               control={form.control}
+              name="temperature"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    <LocalizedText>{t("checkIn.temperature")}</LocalizedText>
+                  </FormLabel>
+                  <FormControl>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => field.onChange("Hot")}
+                        className={`flex-1 py-2 px-3 rounded border transition-colors ${
+                          field.value === "Hot"
+                            ? "bg-orange-100 border-orange-300 text-orange-700"
+                            : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                        }`}
+                      >
+                        <LocalizedText>
+                          {t("cafe.temperature.hot")}
+                        </LocalizedText>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => field.onChange("Cold")}
+                        className={`flex-1 py-2 px-3 rounded border transition-colors ${
+                          field.value === "Cold"
+                            ? "bg-blue-100 border-blue-300 text-blue-700"
+                            : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                        }`}
+                      >
+                        <LocalizedText>
+                          {t("cafe.temperature.cold")}
+                        </LocalizedText>
+                      </button>
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="rating"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t("checkIn.rating")}</FormLabel>
+                  <FormLabel>
+                    <LocalizedText>{t("checkIn.rating")}</LocalizedText>
+                  </FormLabel>
                   <FormControl>
                     <div className="flex items-center gap-3">
                       <RatingStars
@@ -451,7 +556,7 @@ export default function CheckIn() {
               render={() => (
                 <FormItem>
                   <FormLabel>
-                    {language === "ar" ? "الموقع" : "Location"}
+                    <LocalizedText>{t("checkIn.selectLocation")}</LocalizedText>
                   </FormLabel>
                   <FormControl>
                     {lockLocation && selectedCafe ? (
@@ -479,15 +584,20 @@ export default function CheckIn() {
                                 onClick={(e) => e.stopPropagation()}
                                 className="inline-block"
                               >
-                                {language === "ar"
-                                  ? selectedCafe.nameAr || selectedCafe.nameEn
-                                  : selectedCafe.nameEn || selectedCafe.nameAr}
+                                <LocalizedText>
+                                  {language === "ar"
+                                    ? selectedCafe.nameAr || selectedCafe.nameEn
+                                    : selectedCafe.nameEn ||
+                                      selectedCafe.nameAr}
+                                </LocalizedText>
                               </a>
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {language === "ar"
-                                ? selectedCafe.cityAr
-                                : selectedCafe.cityEn}
+                              <LocalizedText>
+                                {language === "ar"
+                                  ? selectedCafe.cityAr
+                                  : selectedCafe.cityEn}
+                              </LocalizedText>
                             </div>
                           </div>
                         </div>
@@ -512,14 +622,14 @@ export default function CheckIn() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
-                    {language === "ar"
-                      ? "ملاحظات (اختياري)"
-                      : "Notes (optional)"}
+                    <LocalizedText>{t("checkIn.notes")}</LocalizedText>
                   </FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder={t("checkIn.notesPlaceholder")}
-                      className="resize-none min-h-[100px]"
+                      className={`resize-none min-h-[100px] ${localizedClassForText(
+                        t("checkIn.notesPlaceholder"),
+                      )}`}
                       {...field}
                       data-testid="textarea-notes"
                     />
@@ -534,7 +644,9 @@ export default function CheckIn() {
               name="tastingNotes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t("checkIn.tastingNotes")}</FormLabel>
+                  <FormLabel>
+                    <LocalizedText>{t("checkIn.tastingNotes")}</LocalizedText>
+                  </FormLabel>
                   <FormControl>
                     <TastingNotesInput
                       notes={field.value || []}
@@ -552,27 +664,20 @@ export default function CheckIn() {
               size="lg"
               disabled={
                 createCheckInMutation.isPending ||
-                updateCheckInMutation.isPending
+                updateCheckInMutation.isPending ||
+                !temperatureValue
               }
               data-testid="button-submit-checkin"
             >
               {createCheckInMutation.isPending ||
               updateCheckInMutation.isPending ? (
-                language === "ar" ? (
-                  "جاري التسجيل..."
-                ) : editId ? (
-                  "Updating..."
-                ) : (
-                  "Checking in..."
-                )
+                <LocalizedText>{t("common.loading")}</LocalizedText>
               ) : (
                 <>
                   <Check className="h-5 w-5 me-2" />
-                  {editId
-                    ? language === "ar"
-                      ? "تحديث"
-                      : "Update"
-                    : t("checkIn.submit")}
+                  <LocalizedText>
+                    {editId ? t("checkIn.update") : t("checkIn.submit")}
+                  </LocalizedText>
                 </>
               )}
             </Button>

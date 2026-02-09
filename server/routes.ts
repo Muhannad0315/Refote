@@ -10,7 +10,9 @@ import {
 // Use the server-side helper to query Places for the TEMP test location
 import { getCafesAtLocation } from "../cafes";
 import { mergePlaces } from "./mergePlaces";
-import { getTestLocation } from "./test-location";
+// Note: Do NOT import getTestLocation here. We must not read temp_location.json
+// at server startup. Dev overrides are evaluated per-request via
+// `applyLocationOverride` which reads `temp_location.json` on demand.
 import { getLocationCell } from "../shared/locationCell";
 import {
   getCachedNearbySearch,
@@ -18,7 +20,33 @@ import {
 } from "./nearbySearchCache";
 import { SEARCH_RADIUS_METERS, SEARCH_RADIUS_SOURCE } from "./searchConstants";
 import { CAFE_DISCOVER_SELECT, CAFE_DETAIL_SELECT } from "./db/selects";
+import {
+  loadDiscoverConfig,
+  logDiscoverConfig,
+  normalizeCountry,
+} from "./discoverConfig";
+import { applyLocationOverride } from "./devLocationOverride";
 import { randomUUID } from "crypto";
+
+// Haversine distance calculator (returns distance in meters)
+function haversineDistance(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371000; // Earth radius in meters
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 // Canonical place shape used for Normalize/Insert operations
 type CanonicalPlace = {
@@ -32,7 +60,31 @@ type CanonicalPlace = {
   photo_reference?: string | null;
   city_en?: string | null;
   city_ar?: string | null;
+  country?: string | null; // ISO-2 country code
 };
+
+// Detect if error is a network/DNS failure (Supabase unreachable)
+function isSupabaseUnreachable(error: any): boolean {
+  const message = String(error?.message || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
+  const code = String(error?.code || "").toUpperCase();
+  const combined = `${message} ${details} ${code}`;
+
+  return (
+    combined.includes("ENOTFOUND") || // DNS resolution failed
+    combined.includes("GETADDRINFO") || // DNS lookup error
+    combined.includes("FETCH FAILED") || // Generic fetch failure
+    combined.includes("FAILED TO FETCH") || // Another fetch variant
+    combined.includes("NETWORK ERROR") ||
+    combined.includes("CONNECTION REFUSED") ||
+    combined.includes("UNABLE TO REACH") ||
+    combined.includes("ECONNREFUSED") ||
+    combined.includes("ETIMEDOUT") ||
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT"
+  );
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -44,13 +96,200 @@ export async function registerRoutes(
 
   async function getUserIdFromToken(token?: string) {
     if (!token) return null;
+    // sanitize token if caller accidentally passed the full Authorization header
+    try {
+      token = String(token)
+        .replace(/^Bearer\s+/i, "")
+        .trim();
+    } catch (_) {}
     try {
       const { createServerSupabaseClient } = await import("./supabaseClient");
       const supabase = createServerSupabaseClient(token);
-      const { data, error } = await supabase.auth.getUser();
-      if (error) return null;
-      return data.user?.id ?? null;
+      // token preview logging removed to reduce dev noise
+      // Pass the token explicitly to getUser to ensure auth-js uses it
+      const { data, error } = await (supabase.auth as any).getUser({
+        access_token: token,
+      });
+      if (!error && data && data.user) return data.user.id ?? null;
+
+      // If auth-js refused the token (some environments), try the REST
+      // endpoint directly as a fallback. This avoids failing when
+      // auth-js cannot parse/forward the header but the auth REST API
+      // still accepts the Bearer token.
+      try {
+        if (process.env.SUPABASE_URL) {
+          try {
+            const url = `${process.env.SUPABASE_URL.replace(
+              /\/+$/,
+              "",
+            )}/auth/v1/user`;
+            const resp = await fetch(url, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                // Prefer the anon/public key for auth REST calls; the
+                // service role key can cause JWT verification issues.
+                apikey:
+                  process.env.SUPABASE_ANON_KEY ||
+                  process.env.SUPABASE_SERVICE_KEY ||
+                  "",
+                "Content-Type": "application/json",
+              },
+            });
+            if (resp.ok) {
+              const body = await resp.json();
+              // REST returns user object shape; prefer `id` or `user.id`.
+              return body.id ?? body.user?.id ?? null;
+            } else {
+              const text = await resp.text().catch(() => "<unreadable>");
+
+              // 403 user_not_found means the user was deleted while token was valid
+              // This is a hard session invalidation, not retryable
+              if (resp.status === 403 && text.includes("user_not_found")) {
+                try {
+                  if (process.env.NODE_ENV !== "production")
+                    console.warn(
+                      "getUserIdFromToken: User deleted (403 user_not_found), session invalid",
+                    );
+                } catch (_e) {}
+                // Return special marker for client to clear session
+                const err = new Error("SESSION_INVALID");
+                (err as any).sessionInvalid = true;
+                throw err;
+              }
+
+              try {
+                if (process.env.NODE_ENV !== "production")
+                  console.warn(
+                    "getUserIdFromToken: auth REST fallback non-ok",
+                    {
+                      status: resp.status,
+                      body: text,
+                    },
+                  );
+              } catch (_e) {}
+            }
+          } catch (fetchErr) {
+            // Check if this is a network/DNS error
+            if (isSupabaseUnreachable(fetchErr)) {
+              // Re-throw as special error so routes can return 503
+              const err = new Error("SUPABASE_UNREACHABLE");
+              (err as any).code = "SUPABASE_UNREACHABLE";
+              throw err;
+            }
+            // Re-throw SESSION_INVALID errors
+            if ((fetchErr as any)?.sessionInvalid === true) {
+              throw fetchErr;
+            }
+            // Other errors - log and continue
+            try {
+              if (process.env.NODE_ENV !== "production")
+                console.warn(
+                  "getUserIdFromToken: auth REST fetch error",
+                  fetchErr,
+                );
+            } catch (_e) {}
+          }
+        }
+      } catch (restErr) {
+        // Re-throw SESSION_INVALID errors so they propagate to caller
+        if ((restErr as any)?.sessionInvalid === true) {
+          throw restErr;
+        }
+
+        try {
+          if (process.env.NODE_ENV !== "production")
+            console.warn(
+              "getUserIdFromToken: auth REST fallback error",
+              restErr,
+            );
+        } catch (_) {}
+
+        // No insecure fallback here. If both auth-js and the REST endpoint
+        // failed to validate the token, return null. We intentionally avoid
+        // decoding JWTs without verification in any environment.
+        try {
+          if (process.env.NODE_ENV !== "production")
+            console.warn(
+              "getUserIdFromToken: supabase.auth.getUser error",
+              error,
+            );
+        } catch (_) {}
+        return null;
+      }
     } catch (err) {
+      // SESSION_INVALID errors should propagate (user deleted)
+      if ((err as any)?.sessionInvalid === true) {
+        throw err;
+      }
+      try {
+        if (process.env.NODE_ENV !== "production")
+          console.error("getUserIdFromToken: exception", err);
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  // Helper: format errors for client responses. In development include
+  // structured details; in production return a safe default message.
+  function formatErrorForResponse(error: any, defaultMsg: string) {
+    try {
+      if (process.env.NODE_ENV === "production") return defaultMsg;
+      if (error instanceof Error) return error.message;
+      try {
+        return JSON.stringify(error, Object.getOwnPropertyNames(error));
+      } catch (_) {
+        try {
+          return String(error);
+        } catch (_2) {
+          return defaultMsg;
+        }
+      }
+    } catch (_e) {
+      return defaultMsg;
+    }
+  }
+
+  // DEBUG: email confirmation inspection (remove before production)
+  // Input: email string
+  // Logs only to the server console the auth user's id, email,
+  // email_confirmed_at and confirmed_at (if present). Do NOT expose
+  // this information to clients or include it in responses.
+  async function debugInspectEmailConfirmation(
+    email: string,
+  ): Promise<any | null> {
+    try {
+      const { createServerSupabaseClient } = await import("./supabaseClient");
+      const supabase = createServerSupabaseClient();
+      const { data: users, error } = await supabase.auth.admin.listUsers();
+      if (error) {
+        console.error("[auth-debug] failed to list users", error);
+        return null;
+      }
+      const found = (users?.users || []).find(
+        (u: any) =>
+          String(u.email || "").toLowerCase() ===
+          String(email || "").toLowerCase(),
+      );
+      if (!found) {
+        console.log("[auth-debug] User not found for email:", email);
+        return null;
+      }
+      // Log only the requested fields with a clear prefix.
+      try {
+        console.log(
+          `[auth-debug] user.id=${found.id} user.email=${
+            found.email
+          } email_confirmed_at=${found.email_confirmed_at} confirmed_at=${
+            found.confirmed_at ?? ""
+          }`,
+        );
+      } catch (e) {
+        // Ensure debug logging never throws
+        console.log("[auth-debug] failed to stringify user fields", e);
+      }
+      return found;
+    } catch (e) {
+      console.error("[auth-debug] inspection failed", e);
       return null;
     }
   }
@@ -58,12 +297,32 @@ export async function registerRoutes(
   // Create a new check-in
   app.post("/api/check-ins", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
-      if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      if (!userId) return res.status(401).json({ error: "Missing auth token" });
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
+
+      if (!userId) {
+        if (token) return res.status(401).json({ error: "Invalid auth token" });
+        return res.status(401).json({ error: "Missing auth token" });
+      }
 
       // Defensive guard: ensure the user's profile is marked complete before
       // allowing check-in creation. Use the service role to read the
@@ -82,7 +341,9 @@ export async function registerRoutes(
           return res.status(500).json({ error: "Failed to validate profile" });
         }
         if (!profRow) {
-          throw new Error("Invariant violation: authenticated user has no profile");
+          throw new Error(
+            "Invariant violation: authenticated user has no profile",
+          );
         }
         if (!profRow.is_complete) {
           return res.status(403).json({ error: "Profile incomplete" });
@@ -103,8 +364,16 @@ export async function registerRoutes(
         photoUrl: req.body.photoUrl,
         cafeId: req.body.cafeId ?? null,
         roasterId: req.body.roasterId ?? null,
+        temperature: req.body.temperature,
         userId: userId,
       };
+      try {
+        console.info("/api/check-ins POST payload:", {
+          drinkId: payload.drinkId,
+          temperature: payload.temperature,
+          rating: payload.rating,
+        });
+      } catch (_) {}
       const validatedData = insertCheckInSchema.parse(payload);
 
       // attach token so storage.createCheckIn can use it for Supabase insert
@@ -141,7 +410,9 @@ export async function registerRoutes(
       const checkIn = await storage.createCheckIn(validatedData);
       res.status(201).json(checkIn);
     } catch (error) {
-      res.status(400).json({ error: "Invalid check-in data" });
+      console.error("/api/check-ins: create error", error);
+      const msg = formatErrorForResponse(error, "Invalid check-in data");
+      res.status(400).json({ error: msg });
     }
   });
 
@@ -151,12 +422,31 @@ export async function registerRoutes(
   // Toggle like on a check-in
   app.post("/api/check-ins/:id/like", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
-      if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      if (!userId) return res.status(401).json({ error: "Missing auth token" });
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
+      if (!userId) {
+        if (token) return res.status(401).json({ error: "Invalid auth token" });
+        return res.status(401).json({ error: "Missing auth token" });
+      }
       const isLiked = await storage.toggleLike(userId, req.params.id);
       res.json({ isLiked });
     } catch (error) {
@@ -167,12 +457,35 @@ export async function registerRoutes(
   // Get a specific check-in (with details)
   app.get("/api/check-ins/:id", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      const checkIn = await storage.getCheckInWithDetails(req.params.id);
+      try {
+        console.info("/api/check-ins/:id - auth user", {
+          userId,
+          id: req.params.id,
+        });
+      } catch (_) {}
+      const checkIn = await storage.getCheckInWithDetails(req.params.id, token);
       if (!checkIn)
         return res.status(404).json({ error: "Check-in not found" });
       if (checkIn.userId !== userId)
@@ -186,12 +499,29 @@ export async function registerRoutes(
   // Update a check-in
   app.put("/api/check-ins/:id", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      const existing = await storage.getCheckIn(req.params.id);
+      const existing = await storage.getCheckIn(req.params.id, token);
       if (!existing)
         return res.status(404).json({ error: "Check-in not found" });
       if (existing.userId !== userId)
@@ -207,8 +537,16 @@ export async function registerRoutes(
         photoUrl: req.body.photoUrl,
         cafeId: req.body.cafeId ?? existing.cafeId,
         roasterId: req.body.roasterId ?? existing.roasterId,
+        temperature: req.body.temperature,
         userId: userId,
       };
+      try {
+        console.info("/api/check-ins PUT payload:", {
+          drinkId: payload.drinkId,
+          temperature: payload.temperature,
+          rating: payload.rating,
+        });
+      } catch (_) {}
 
       const validatedData = insertCheckInSchema.parse(payload);
 
@@ -242,7 +580,9 @@ export async function registerRoutes(
         return res.status(500).json({ error: "Failed to update check-in" });
       res.json(updated);
     } catch (error) {
-      res.status(400).json({ error: "Invalid check-in data" });
+      console.error(`/api/check-ins/${req.params.id}: update error`, error);
+      const msg = formatErrorForResponse(error, "Invalid check-in data");
+      res.status(400).json({ error: msg });
     }
   });
 
@@ -252,9 +592,28 @@ export async function registerRoutes(
       const token =
         (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
         undefined;
-      const userId = await getUserIdFromToken(token);
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      const existing = await storage.getCheckIn(req.params.id);
+      const existing = await storage.getCheckIn(req.params.id, token);
       if (!existing)
         return res.status(404).json({ error: "Check-in not found" });
       if (existing.userId !== userId)
@@ -265,7 +624,135 @@ export async function registerRoutes(
         return res.status(500).json({ error: "Failed to delete check-in" });
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete check-in" });
+      console.error(`/api/check-ins/${req.params.id}: delete error`, error);
+      const msg = formatErrorForResponse(error, "Failed to delete check-in");
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // Get all check-ins (feed)
+  app.get("/api/check-ins", async (req, res) => {
+    try {
+      const { createServerSupabaseClient } = await import("./supabaseClient");
+      const supabase = createServerSupabaseClient();
+
+      // Fetch last 100 check-ins
+      const { data: rows, error } = await supabase
+        .from("check_ins")
+        .select(
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+
+      // Fetch all related users, profiles, and cafes in bulk
+      const userIds = Array.from(
+        new Set((rows || []).map((r: any) => r.user_id).filter(Boolean)),
+      );
+      const placeIds = Array.from(
+        new Set((rows || []).map((r: any) => r.place_id).filter(Boolean)),
+      );
+
+      let usersMap: Record<string, any> = {};
+      let profilesMap: Record<string, any> = {};
+      let cafesMap: Record<string, any> = {};
+
+      // Fetch users
+      if (userIds.length > 0) {
+        const { data: users } = await supabase
+          .from("profiles")
+          .select("user_id, username, display_name, avatar_url")
+          .in("user_id", userIds as any[]);
+        (users || []).forEach((u: any) => {
+          profilesMap[u.user_id] = u;
+        });
+      }
+
+      // Fetch cafes
+      if (placeIds.length > 0) {
+        const { data: cafes } = await supabase
+          .from("coffee_places")
+          .select(
+            "id, google_place_id, name_en, name_ar, city_en, city_ar, photo_reference, rating, reviews",
+          )
+          .in("id", placeIds as any[]);
+        (cafes || []).forEach((c: any) => {
+          cafesMap[c.id] = c;
+        });
+      }
+
+      // Map rows to CheckInWithDetails objects
+      const mapped = (rows || []).map((r: any) => {
+        const profile = profilesMap[r.user_id];
+        const cafe = r.place_id ? cafesMap[r.place_id] : null;
+
+        const user = {
+          id: r.user_id,
+          username: profile?.username || "",
+          displayName: profile?.display_name || "",
+          avatarUrl: profile?.avatar_url || null,
+        };
+
+        const cafeObj = cafe
+          ? {
+              id: cafe.id,
+              placeId: cafe.google_place_id ?? null,
+              nameEn: cafe.name_en ?? null,
+              nameAr: cafe.name_ar ?? null,
+              cityEn: cafe.city_en ?? null,
+              cityAr: cafe.city_ar ?? null,
+              photoReference: cafe.photo_reference ?? null,
+              rating: cafe.rating ?? null,
+              reviews: cafe.reviews ?? null,
+            }
+          : null;
+
+        return {
+          id: r.id,
+          userId: r.user_id,
+          drinkId: r.drink_name || "",
+          drink: {
+            id: r.drink_name || "",
+            name: r.drink_name || "",
+            type: null,
+            style: null,
+            description: null,
+          },
+          cafeId: r.place_id ?? null,
+          cafe: cafeObj,
+          roasterId: null,
+          roaster: null,
+          rating: r.rating ?? 0,
+          notes: r.notes ?? null,
+          photoUrl: r.photo_url ?? null,
+          tastingNotes: Array.isArray(r.tasting_notes)
+            ? r.tasting_notes
+            : r.tasting_notes
+            ? (() => {
+                try {
+                  const parsed =
+                    typeof r.tasting_notes === "string"
+                      ? JSON.parse(r.tasting_notes)
+                      : r.tasting_notes;
+                  return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                  return [];
+                }
+              })()
+            : [],
+          createdAt: r.created_at ? new Date(r.created_at) : new Date(),
+          user,
+          likesCount: 0,
+          isLiked: false,
+        };
+      });
+
+      res.json(mapped);
+    } catch (error) {
+      console.error("/api/check-ins: fetch error", error);
+      res.status(500).json({ error: "Failed to fetch check-ins" });
     }
   });
 
@@ -278,29 +765,66 @@ export async function registerRoutes(
       try {
         const apiKey = process.env.GOOGLE_API_KEY as string;
 
-        // Determine search location: use provided lat/lng if present, else fall back
-        // to the TEMP test location. We will normalize the coordinates into a
-        // location cell to use as a cache key.
-        let lat: number;
-        let lng: number;
-        if (req.query.lat && req.query.lng) {
-          lat = Number(req.query.lat);
-          lng = Number(req.query.lng);
-        } else {
-          const loc = getTestLocation();
-          lat = loc.lat;
-          lng = loc.lng;
-        }
-
-        const lang = (req.query.lang as string) === "ar" ? "ar" : "en";
-
-        // Observability: unique id for this request and counters
+        // Observability: unique id for this request
         const requestId =
           typeof randomUUID === "function"
             ? randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        // Load country configuration
+        const config = loadDiscoverConfig();
+        logDiscoverConfig(config, requestId);
+
+        // Determine search location: prefer explicit client-provided coords.
+        // Dev override is applied only when `temp_location.json.enabled === true`.
+        // If the client did not provide coords and no override is active, return
+        // a 400 so callers must supply lat/lng (prevents silent test fallbacks).
+        let providedLatLng = false;
+        let requestLat: number | undefined = undefined;
+        let requestLng: number | undefined = undefined;
+        if (
+          typeof req.query.lat !== "undefined" &&
+          typeof req.query.lng !== "undefined"
+        ) {
+          providedLatLng = true;
+          requestLat = Number(req.query.lat);
+          requestLng = Number(req.query.lng);
+        }
+
+        // Apply dev location override per-request. This will only return an
+        // overridden location when `temp_location.json.enabled === true`.
+        const { lat, lng, overridden } = applyLocationOverride(
+          requestLat,
+          requestLng,
+          requestId,
+        );
+
+        if (!overridden && !providedLatLng) {
+          return res.status(400).json({
+            error: "Missing lat/lng. Provide coords or enable dev override",
+          });
+        }
+
+        if (overridden) {
+          try {
+            console.log(
+              `[discover][${requestId}] effectiveLatLng=(${lat}, ${lng}) (overridden)`,
+            );
+          } catch (_) {}
+        }
+
+        const lang = (req.query.lang as string) === "ar" ? "ar" : "en";
+
+        // Accept radius_m (or radius for backward compat) from query parameter (in meters)
+        let radiusMeters = Number(req.query.radius_m || req.query.radius);
+        if (isNaN(radiusMeters) || radiusMeters <= 0) {
+          radiusMeters = SEARCH_RADIUS_METERS;
+        }
+
         let googleCallsMade = 0;
         let dataSource: "supabase" | "google" = "supabase";
+        let coverageHit = false;
+        let coverageMaxRadius = 0;
 
         // Always query Supabase first using location + radius. If we have
         // results, return them immediately. Otherwise call Google, persist
@@ -311,8 +835,50 @@ export async function registerRoutes(
           );
           const supabase = createServerSupabaseClient();
 
+          // COVERAGE CHECK: Query discover_coverage to see if we have sufficient coverage
+          try {
+            const { data: coverageRows, error: coverageError } = await supabase
+              .from("discover_coverage")
+              .select("*");
+
+            if (!coverageError && coverageRows && coverageRows.length > 0) {
+              // Check if any existing coverage is nearby (within 200m) and sufficient
+              const COVERAGE_MOVEMENT_THRESHOLD = 200; // meters
+
+              for (const row of coverageRows) {
+                const distance = haversineDistance(
+                  lat,
+                  lng,
+                  row.center_lat,
+                  row.center_lng,
+                );
+
+                if (
+                  distance <= COVERAGE_MOVEMENT_THRESHOLD &&
+                  row.max_radius_m >= radiusMeters
+                ) {
+                  coverageHit = true;
+                  coverageMaxRadius = row.max_radius_m;
+                  console.log(
+                    `[discover] requestId=${requestId} coverageHit=true distance=${Math.round(
+                      distance,
+                    )}m maxRadius=${
+                      row.max_radius_m
+                    }m requestedRadius=${radiusMeters}m`,
+                  );
+                  break;
+                }
+              }
+            }
+          } catch (coverageCheckError) {
+            console.warn(
+              `[discover] requestId=${requestId} coverageCheckError: could not query discover_coverage`,
+              coverageCheckError,
+            );
+          }
+
           // Compute rough degree bounds for the requested radius (meters).
-          const meters = SEARCH_RADIUS_METERS;
+          const meters = radiusMeters;
           const latDelta = meters / 111000; // ~111km per degree latitude
           const lngDelta =
             meters /
@@ -352,67 +918,80 @@ export async function registerRoutes(
           }
 
           if (Array.isArray(sbRows) && sbRows.length > 0) {
-            const mapped = sbRows.map((r: any) => {
-              const nameEn = r.name_en ?? r.name_ar ?? null;
-              const nameAr = r.name_ar ?? r.name_en ?? null;
-              const addressEn = r.address_en ?? null;
-              const addressAr = r.address_ar ?? null;
-              const cityEn = r.city_en ?? null;
-              const cityAr = r.city_ar ?? null;
-              const displayName =
-                lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
-              const displayAddress =
-                lang === "ar" ? addressAr ?? addressEn : addressEn ?? addressAr;
-              const displayCity =
-                lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
-              return {
-                id: r.id ?? null,
-                placeId: r.google_place_id ?? null,
-                nameEn,
-                name: displayName,
-                nameAr,
-                addressEn,
-                address: displayAddress,
-                addressAr,
-                cityEn,
-                city: displayCity,
-                cityAr,
-                latitude: r.lat ?? null,
-                longitude: r.lng ?? null,
-                rating: r.rating ?? null,
-                reviews: r.reviews ?? null,
-                // Do not return proxied photo URLs in the Discover list —
-                // photos are fetched lazily on the cafe detail page.
-                photoUrl: r.photo_reference
-                  ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${r.photo_reference}&key=${apiKey}`
-                  : null,
-              };
-            });
+            // Coverage-aware: if we have Supabase results AND coverage is sufficient, return them
+            // Otherwise, still call Google to expand coverage
+            if (coverageHit) {
+              // Apply distance filtering to ensure all cafes are within radiusMeters
+              const rowsWithinRadius = sbRows.filter((r: any) => {
+                const cafeLat = r.lat;
+                const cafeLng = r.lng;
+                if (
+                  typeof cafeLat !== "number" ||
+                  typeof cafeLng !== "number"
+                ) {
+                  return false;
+                }
+                const distance = haversineDistance(lat, lng, cafeLat, cafeLng);
+                return distance <= radiusMeters;
+              });
 
-            try {
-              dataSource = "supabase";
-              console.log(
-                `[discover] requestId=${requestId} dataSource=${dataSource} lang=${lang} radius=${SEARCH_RADIUS_METERS} count=${mapped.length} googleCallsMade=${googleCallsMade}`,
-              );
-            } catch (_) {}
+              const mapped = rowsWithinRadius.map((r: any) => {
+                const nameEn = r.name_en ?? r.name_ar ?? null;
+                const nameAr = r.name_ar ?? r.name_en ?? null;
+                const addressEn = r.address_en ?? null;
+                const addressAr = r.address_ar ?? null;
+                const cityEn = r.city_en ?? null;
+                const cityAr = r.city_ar ?? null;
+                const displayName =
+                  lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
+                const displayAddress =
+                  lang === "ar"
+                    ? addressAr ?? addressEn
+                    : addressEn ?? addressAr;
+                const displayCity =
+                  lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
+                const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
+                return {
+                  id: r.id ?? null,
+                  placeId: r.google_place_id ?? null,
+                  nameEn,
+                  name: displayName,
+                  nameAr,
+                  addressEn,
+                  address: displayAddress,
+                  addressAr,
+                  cityEn,
+                  city: displayCity,
+                  cityAr,
+                  latitude: r.lat ?? null,
+                  longitude: r.lng ?? null,
+                  rating: r.rating ?? null,
+                  reviews: r.reviews ?? null,
+                  // Do not return proxied photo URLs in the Discover list —
+                  // photos are fetched lazily on the cafe detail page.
+                  photoUrl: r.photo_reference
+                    ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${r.photo_reference}&key=${apiKey}`
+                    : null,
+                  distance: distMeters,
+                };
+              });
 
-            try {
-              console.log(
-                `[discover] requestId=${requestId} mappedCount=${mapped.length}`,
-              );
-              // Log a compact JSON preview of the mapped results for debugging.
-              // Wrap in try/catch to avoid crashing the route on serialization issues.
+              // Temporary per-request debug log: sample distance in meters
               try {
-                const preview = JSON.stringify(mapped.slice(0, 20));
-              } catch (e) {
-                console.log(
-                  `[discover] requestId=${requestId} failed to stringify mapped preview`,
-                  e?.message ?? e,
-                );
-              }
-            } catch (_) {}
+                const sample = mapped[0]?.distance ?? null;
+                console.log(`[discover][debug] sampleDistanceMeters=${sample}`);
+              } catch (_) {}
 
-            return res.json(mapped);
+              try {
+                dataSource = "supabase";
+                console.log(
+                  `[discover][${requestId}] dataSource=${dataSource} effectiveLatLng=(${lat}, ${lng}) radiusRequested=${radiusMeters} boundedCount=${sbRows.length} distanceFiltered=${mapped.length} googleCalls=0 coverageHit=true`,
+                );
+              } catch (_) {}
+
+              return res.json(mapped);
+            }
+            // If coverage miss but we have Supabase results, fall through to Google to expand coverage
           }
 
           // No Supabase rows — call Google Places (both 'en' and 'ar'), persist results, then re-query Supabase
@@ -423,9 +1002,7 @@ export async function registerRoutes(
             );
             const beforeCalls = getCurrentWindowCount();
 
-            try {
-              console.log("Google fallback triggered");
-            } catch (_) {}
+            // Google fallback: calling Places API to backfill nearby cafes
 
             let enPlaces: any[] = [];
             let arPlaces: any[] = [];
@@ -433,16 +1010,16 @@ export async function registerRoutes(
             // Attempt English Nearby Search
             try {
               enPlaces =
-                (await getCafesAtLocation(apiKey, lat, lng, "en")) || [];
+                (await getCafesAtLocation(
+                  apiKey,
+                  lat,
+                  lng,
+                  radiusMeters,
+                  "en",
+                  config.allowedCountries,
+                  requestId,
+                )) || [];
             } catch (errEn: any) {
-              if (
-                errEn &&
-                errEn.message === "Service only available in Saudi Arabia"
-              ) {
-                return res
-                  .status(422)
-                  .json({ error: "Service only available in Saudi Arabia" });
-              }
               if (errEn && errEn.message === "RateLimitExceeded") {
                 console.warn(
                   "Google API soft-rate-limit hit during English fallback",
@@ -455,16 +1032,16 @@ export async function registerRoutes(
             // Attempt Arabic Nearby Search (always attempt both)
             try {
               arPlaces =
-                (await getCafesAtLocation(apiKey, lat, lng, "ar")) || [];
+                (await getCafesAtLocation(
+                  apiKey,
+                  lat,
+                  lng,
+                  radiusMeters,
+                  "ar",
+                  config.allowedCountries,
+                  requestId,
+                )) || [];
             } catch (errAr: any) {
-              if (
-                errAr &&
-                errAr.message === "Service only available in Saudi Arabia"
-              ) {
-                return res
-                  .status(422)
-                  .json({ error: "Service only available in Saudi Arabia" });
-              }
               if (errAr && errAr.message === "RateLimitExceeded") {
                 console.warn(
                   "Google API soft-rate-limit hit during Arabic fallback",
@@ -480,15 +1057,7 @@ export async function registerRoutes(
             const afterCalls = getCurrentWindowCount();
             const callsMade = afterCalls - beforeCalls;
             googleCallsMade = callsMade;
-            try {
-              console.log(`[discover] googleCalls=${callsMade}`);
-            } catch (_) {}
           } catch (e: any) {
-            if (e && e.message === "Service only available in Saudi Arabia") {
-              return res
-                .status(422)
-                .json({ error: "Service only available in Saudi Arabia" });
-            }
             if (e && e.message === "RateLimitExceeded") {
               console.warn(
                 "Google API soft-rate-limit hit while backfilling; returning empty results",
@@ -497,7 +1066,7 @@ export async function registerRoutes(
                 dataSource = "google";
                 googleCallsMade = 0;
                 console.log(
-                  `[discover] requestId=${requestId} dataSource=${dataSource} lang=${lang} radius=${SEARCH_RADIUS_METERS} count=0 googleCallsMade=${googleCallsMade}`,
+                  `[discover] requestId=${requestId} dataSource=${dataSource} lang=${lang} radius=${radiusMeters} placesFetched=0 googleRequestsMade=${googleCallsMade}`,
                 );
               } catch (_) {}
               return res.json([]);
@@ -529,6 +1098,9 @@ export async function registerRoutes(
               (colsData || []).map((c: any) => c.column_name),
             );
 
+            // TEMPORARY: Duplicate detection
+            const processedPlaceIds = new Set<string>();
+
             for (const p of places) {
               const google_place_id =
                 (p as any).google_place_id ??
@@ -541,6 +1113,8 @@ export async function registerRoutes(
               const plng =
                 p.lng ?? p.longitude ?? (p.location && p.location.lng) ?? null;
               if (!google_place_id) continue;
+
+              processedPlaceIds.add(google_place_id);
 
               try {
                 const { data: existingData, error: selErr } = await supabase
@@ -575,6 +1149,9 @@ export async function registerRoutes(
                   lng: plng ?? undefined,
                   photo_reference:
                     p.photo_reference ?? p.photoResource ?? undefined,
+                  // CRITICAL FIX: Extract rating and reviews from mergePlaces output
+                  rating: p.rating !== undefined ? p.rating : undefined,
+                  reviews: p.reviews !== undefined ? p.reviews : undefined,
                 };
 
                 // Build candidate strictly from Nearby Search fields only.
@@ -589,6 +1166,7 @@ export async function registerRoutes(
                   reviews: detailsFromNearby.reviews ?? undefined,
                   photo_reference:
                     detailsFromNearby.photo_reference ?? undefined,
+                  country: p.country ?? undefined, // Country from getCafesAtLocation
                 };
 
                 // Build and enforce a canonical shape before persisting. Only
@@ -643,6 +1221,10 @@ export async function registerRoutes(
                       candidate.city_ar !== undefined
                         ? candidate.city_ar
                         : null,
+                    country:
+                      candidate.country !== undefined
+                        ? candidate.country
+                        : null,
                   } as CanonicalPlace;
                 })();
 
@@ -662,6 +1244,8 @@ export async function registerRoutes(
                   } catch (_) {}
                   continue;
                 }
+
+                // canonical object built; do not emit per-place TRACE logs here.
 
                 // Phase 1: ALWAYS upsert the canonical object into Supabase.
                 try {
@@ -716,14 +1300,6 @@ export async function registerRoutes(
                           (canonical as any).name_ar !== undefined
                             ? (canonical as any).name_ar
                             : null,
-                        rating:
-                          (canonical as any).rating !== undefined
-                            ? (canonical as any).rating
-                            : null,
-                        reviews:
-                          (canonical as any).reviews !== undefined
-                            ? (canonical as any).reviews
-                            : null,
                         photo_reference:
                           (canonical as any).photo_reference !== undefined
                             ? (canonical as any).photo_reference
@@ -736,11 +1312,30 @@ export async function registerRoutes(
                           (canonical as any).city_ar !== undefined
                             ? (canonical as any).city_ar
                             : null,
+                        country:
+                          (canonical as any).country !== undefined &&
+                          (canonical as any).country !== null
+                            ? normalizeCountry((canonical as any).country)
+                            : null,
+
                         // Do not set last_fetched_at during Discover — this field
                         // is reserved for Place Details fetches on the cafe detail
                         // endpoint.
                         last_fetched_at_ts: new Date().toISOString(),
                       };
+
+                      // CRITICAL FIX: Always include rating/reviews from canonical in the upsert payload.
+                      // Check if the fields EXIST in canonical (using 'in' operator), not if they're undefined.
+                      // If Google provided them, they'll be included. If not provided, the field won't be in canonical
+                      // and existing DB values will be preserved.
+                      if ("rating" in canonical) {
+                        insertObj.rating = (canonical as any).rating;
+                      }
+                      if ("reviews" in canonical) {
+                        insertObj.reviews = (canonical as any).reviews;
+                      }
+
+                      // DB payload prepared; suppress per-place dbPayload logs.
 
                       // Validate presence of id and numeric coords
                       if (!insertObj.google_place_id) {
@@ -778,14 +1373,6 @@ export async function registerRoutes(
                         continue;
                       }
 
-                      try {
-                        console.log(
-                          "[discover] inserting",
-                          insertObj.google_place_id,
-                          { insertObj },
-                        );
-                      } catch (_) {}
-
                       const { data: upData, error: upErr } = await supabase
                         .from("coffee_places")
                         .upsert(insertObj as any, {
@@ -806,13 +1393,7 @@ export async function registerRoutes(
                           error: upErr?.message ?? JSON.stringify(upErr),
                         });
                       } else {
-                        try {
-                          console.log(
-                            "[discover] insert success",
-                            insertObj.google_place_id,
-                            { rows: upData },
-                          );
-                        } catch (_) {}
+                        // Persist succeeded for this row; per-place persisted logs suppressed.
                         persistResults.push({
                           google_place_id: insertObj.google_place_id ?? null,
                           op: "upsert",
@@ -858,20 +1439,96 @@ export async function registerRoutes(
             console.error("Failed to persist coffee_places batch:", e);
           }
 
-          // Log persistence summary so we can confirm rows were written.
+          // Log persistence summary
           try {
-            console.log(
-              `[discover] persistCandidates=${persistCandidatesCount}`,
-            );
-            for (const r of persistResults) {
-              console.log("[discover] persistResult", {
-                google_place_id: r.google_place_id,
-                op: r.op,
-                success: r.success,
-                error: r.error ?? null,
-              });
+            const successCount = persistResults.filter((r) => r.success).length;
+            const failCount = persistResults.filter((r) => !r.success).length;
+            if (successCount > 0 || failCount > 0) {
+              console.log(
+                `[discover] persist summary: ${successCount} success, ${failCount} failed`,
+              );
             }
           } catch (_) {}
+
+          // COVERAGE UPSERT: Insert or update discover_coverage record
+          try {
+            const COVERAGE_MOVEMENT_THRESHOLD = 200; // meters
+
+            // Check if a nearby coverage row already exists
+            const { data: existingCoverage } = await supabase
+              .from("discover_coverage")
+              .select("*");
+
+            let nearestRow: any = null;
+            let nearestDistance = Infinity;
+
+            if (existingCoverage && existingCoverage.length > 0) {
+              for (const row of existingCoverage) {
+                const dist = haversineDistance(
+                  lat,
+                  lng,
+                  row.center_lat,
+                  row.center_lng,
+                );
+                if (dist < nearestDistance) {
+                  nearestDistance = dist;
+                  nearestRow = row;
+                }
+              }
+            }
+
+            if (nearestRow && nearestDistance <= COVERAGE_MOVEMENT_THRESHOLD) {
+              // Update existing nearby coverage if requested radius is larger
+              if (radiusMeters > nearestRow.max_radius_m) {
+                const { error: updateErr } = await supabase
+                  .from("discover_coverage")
+                  .update({
+                    max_radius_m: radiusMeters,
+                    last_fetched_at: new Date().toISOString(),
+                  })
+                  .eq("id", nearestRow.id);
+
+                if (updateErr) {
+                  console.warn(
+                    `[discover] requestId=${requestId} coverageUpdate failed:`,
+                    updateErr,
+                  );
+                } else {
+                  console.log(
+                    `[discover] requestId=${requestId} coverageUpdate id=${nearestRow.id} expandedRadius ${nearestRow.max_radius_m}→${radiusMeters}`,
+                  );
+                }
+              }
+            } else {
+              // Insert new coverage row
+              const { error: insertErr } = await supabase
+                .from("discover_coverage")
+                .insert({
+                  center_lat: lat,
+                  center_lng: lng,
+                  max_radius_m: radiusMeters,
+                  last_fetched_at: new Date().toISOString(),
+                });
+
+              if (insertErr) {
+                console.warn(
+                  `[discover] requestId=${requestId} coverageInsert failed:`,
+                  insertErr,
+                );
+              } else {
+                console.log(
+                  `[discover] requestId=${requestId} coverageInsert center=${lat.toFixed(
+                    4,
+                  )},${lng.toFixed(4)} maxRadius=${radiusMeters}m`,
+                );
+              }
+            }
+          } catch (coverageUpsertError) {
+            console.warn(
+              `[discover] requestId=${requestId} coverageUpsertError:`,
+              coverageUpsertError,
+            );
+          }
 
           // Re-query Supabase and return those rows (never return Google objects)
           // Include optional address/city columns when present.
@@ -924,21 +1581,7 @@ export async function registerRoutes(
             console.warn("[discover] failed to fetch sample persisted row", e);
           }
 
-          // Query all rows (no bounding box) to confirm data exists in DB
-          const { data: allRows, error: allErr } = await supabase
-            .from("coffee_places")
-            .select(finalSelect.join(", "));
-          if (allErr) {
-            console.error("Failed to re-query Supabase (all rows)", allErr);
-            return res.status(500).json({ error: "Failed to query cafes" });
-          }
-          try {
-            console.log(
-              `[discover] requery allRows count=${(allRows || []).length}`,
-            );
-          } catch (_) {}
-
-          // Now perform the bounded query as intended and compare results.
+          // Perform bounded query to get cafes within the bounding box
           const { data: finalRows, error: finalErr } = await supabase
             .from("coffee_places")
             .select(finalSelect.join(", "))
@@ -954,41 +1597,45 @@ export async function registerRoutes(
             return res.status(500).json({ error: "Failed to query cafes" });
           }
 
-          // If we attempted to persist candidates but the requery returns
-          // zero rows (and the full-table query also returned zero), this
-          // indicates the inserts did not succeed — log loudly and return
-          // an error rather than silently returning an empty list.
+          // Apply distance filtering to ensure all cafes are within radiusMeters
+          const rowsWithinRadius = (finalRows || []).filter((r: any) => {
+            const cafeLat = r.lat;
+            const cafeLng = r.lng;
+            if (typeof cafeLat !== "number" || typeof cafeLng !== "number") {
+              return false;
+            }
+            const distance = haversineDistance(lat, lng, cafeLat, cafeLng);
+            return distance <= radiusMeters;
+          });
+
+          try {
+            console.log(
+              `[discover][${requestId}] boundedQueryResults=${
+                (finalRows || []).length
+              } afterDistanceFilter=${
+                rowsWithinRadius.length
+              } radiusMeters=${radiusMeters}`,
+            );
+          } catch (_) {}
+
+          // If we persisted cafes but get zero results, this may indicate:
+          // 1) Google returned cafes outside the radius (expected for some locations)
+          // 2) Insert failures (check persistResults)
+          // This is NORMAL for locations with no nearby cafes - return empty array
           if (
             (persistCandidatesCount || 0) > 0 &&
-            (finalRows || []).length === 0 &&
-            (allRows || []).length === 0
+            rowsWithinRadius.length === 0
           ) {
             try {
-              console.error("[discover] INSERT FAILED — NO ROWS FOUND", {
-                requestId,
-                persistCandidatesCount,
-                persistResults,
-              });
-            } catch (_) {}
-            return res
-              .status(500)
-              .json({ error: "INSERT FAILED - NO ROWS FOUND", persistResults });
-          }
-
-          // If bounded query returns no rows but allRows has data, fallback
-          // to returning allRows so we can confirm the data exists and the
-          // bounding math is likely incorrect.
-          const rowsToUse =
-            (finalRows || []).length > 0 ? finalRows : allRows || [];
-          if ((finalRows || []).length === 0 && (allRows || []).length > 0) {
-            try {
-              console.warn(
-                "[discover] bounded re-query returned 0 rows but DB has rows; falling back to full-table results",
+              console.log(
+                `[discover][${requestId}] ZERO_RESULTS after filtering: persisted=${persistCandidatesCount} bounded=${
+                  (finalRows || []).length
+                } withinRadius=0 — returning empty`,
               );
             } catch (_) {}
           }
 
-          const mapped = (rowsToUse || []).map((r: any) => {
+          const mapped = (rowsWithinRadius || []).map((r: any) => {
             const nameEn = r.name_en ?? r.name_ar ?? null;
             const nameAr = r.name_ar ?? r.name_en ?? null;
             const addressEn = r.address_en ?? null;
@@ -1001,6 +1648,7 @@ export async function registerRoutes(
               lang === "ar" ? addressAr ?? addressEn : addressEn ?? addressAr;
             const displayCity =
               lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
+            const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
             return {
               id: r.id ?? null,
               placeId: r.google_place_id ?? null,
@@ -1015,18 +1663,25 @@ export async function registerRoutes(
               cityAr,
               latitude: r.lat ?? null,
               longitude: r.lng ?? null,
-              rating: null,
-              reviews: null,
+              rating: r.rating ?? null,
+              reviews: r.reviews ?? null,
               // Do not return proxied photo URLs in the Discover list —
               // photos are fetched lazily on the cafe detail page.
               photoUrl: null,
+              distance: distMeters,
             };
           });
+
+          // Temporary per-request debug log: sample distance in meters
+          try {
+            const sample = mapped[0]?.distance ?? null;
+            console.log(`[discover][debug] sampleDistanceMeters=${sample}`);
+          } catch (_) {}
 
           try {
             dataSource = "google";
             console.log(
-              `[discover] requestId=${requestId} dataSource=${dataSource} lang=${lang} radius=${SEARCH_RADIUS_METERS} count=${mapped.length} googleCallsMade=${googleCallsMade}`,
+              `[discover][${requestId}] dataSource=${dataSource} effectiveLatLng=(${lat}, ${lng}) radiusRequested=${radiusMeters} googleRadiusUsed=${radiusMeters} placesReturned=${mapped.length} googleCalls=${googleCallsMade} coverageHit=false`,
             );
           } catch (_) {}
 
@@ -1053,26 +1708,48 @@ export async function registerRoutes(
       // Try local cafe first
       const cafe = await storage.getCafe(id);
       if (cafe) {
-        // Compute top drinks (by number of check-ins) for this local cafe
-        const allCheckIns = await storage.getCheckIns();
-        const counts: Record<string, number> = {};
-        for (const c of allCheckIns) {
-          if (c.cafe?.id === cafe.id) {
-            const drinkId =
-              (c as any).drinkId ?? (c.drink && (c.drink as any).id);
-            if (!drinkId) continue;
-            counts[drinkId] = (counts[drinkId] || 0) + 1;
+        // Compute top drinks using SQL aggregation (avg_rating, min 3 check-ins)
+        let topDrinks: Array<{
+          drinkId: string;
+          drinkName: string;
+          avgRating: number;
+          count: number;
+        }> = [];
+
+        try {
+          const { createServerSupabaseClient } = await import(
+            "./supabaseClient"
+          );
+          const supabase = createServerSupabaseClient();
+
+          // Aggregate check_ins by drink_id for this cafe, join with drinks table
+          const { data: aggData, error: aggErr } = await supabase.rpc(
+            "get_top_drinks_for_cafe",
+            {
+              p_place_id: cafe.id,
+              min_check_ins: 1,
+              max_results: 3,
+            },
+          );
+
+          if (!aggErr && aggData) {
+            topDrinks = aggData.map((row: any) => ({
+              drinkId: row.drink_id,
+              drinkName: row.drink_name,
+              avgRating: parseFloat(row.avg_rating),
+              count: parseInt(row.check_in_count, 10),
+            }));
+
+            try {
+              console.log(
+                `[cafe-detail] placeId=${cafe.id} topDrinksCount=${topDrinks.length}`,
+              );
+            } catch (_) {}
           }
+        } catch (e) {
+          console.error("Failed to compute top drinks:", e);
+          topDrinks = [];
         }
-        const top = Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3);
-        const topDrinks = await Promise.all(
-          top.map(async ([drinkId, count]) => {
-            const d = await storage.getDrink(drinkId);
-            return { drinkId, name: d?.name ?? drinkId, count };
-          }),
-        );
 
         // Ensure we return authoritative rating/reviews from the DB when
         // this is a locally persisted cafe (storage.getCafe returned a row).
@@ -1157,25 +1834,46 @@ export async function registerRoutes(
         const lastFetched = (dbRow as any)?.last_fetched_at as number | null;
         if (lastFetched && Date.now() - lastFetched < THIRTY_DAYS_MS) {
           // Use stored data — DO NOT call Google Place Details.
-          const allCheckIns = await storage.getCheckIns();
-          const counts: Record<string, number> = {};
-          for (const c of allCheckIns) {
-            if (c.cafe && c.cafe.id === localByPlace.id) {
-              const drinkId =
-                (c as any).drinkId ?? (c.drink && (c.drink as any).id);
-              if (!drinkId) continue;
-              counts[drinkId] = (counts[drinkId] || 0) + 1;
+          let topDrinks: Array<{
+            drinkId: string;
+            drinkName: string;
+            avgRating: number;
+            count: number;
+          }> = [];
+
+          try {
+            const { createServerSupabaseClient } = await import(
+              "./supabaseClient"
+            );
+            const supabase = createServerSupabaseClient();
+
+            const { data: aggData, error: aggErr } = await supabase.rpc(
+              "get_top_drinks_for_cafe",
+              {
+                p_place_id: localByPlace.id,
+                min_check_ins: 1,
+                max_results: 3,
+              },
+            );
+
+            if (!aggErr && aggData) {
+              topDrinks = aggData.map((row: any) => ({
+                drinkId: row.drink_id,
+                drinkName: row.drink_name,
+                avgRating: parseFloat(row.avg_rating),
+                count: parseInt(row.check_in_count, 10),
+              }));
+
+              try {
+                console.log(
+                  `[cafe-detail] placeId=${id} topDrinksCount=${topDrinks.length}`,
+                );
+              } catch (_) {}
             }
+          } catch (e) {
+            console.error("Failed to compute top drinks:", e);
+            topDrinks = [];
           }
-          const top = Object.entries(counts)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3);
-          const topDrinks = await Promise.all(
-            top.map(async ([drinkId, count]) => {
-              const d = await storage.getDrink(drinkId);
-              return { drinkId, name: d?.name ?? drinkId, count };
-            }),
-          );
 
           const nameEn =
             (dbRow && (dbRow.name_en ?? dbRow.name_ar)) ??
@@ -1253,26 +1951,48 @@ export async function registerRoutes(
         }
 
         // Compute topDrinks from local check-ins referencing this place
-        const localCafes = localByPlace ? [localByPlace] : [];
-        const allCheckIns = await storage.getCheckIns();
-        const counts: Record<string, number> = {};
-        for (const c of allCheckIns) {
-          if (c.cafe && localCafes.some((lc) => lc.id === (c.cafe as any).id)) {
-            const drinkId =
-              (c as any).drinkId ?? (c.drink && (c.drink as any).id);
-            if (!drinkId) continue;
-            counts[drinkId] = (counts[drinkId] || 0) + 1;
+        let topDrinks: Array<{
+          drinkId: string;
+          drinkName: string;
+          avgRating: number;
+          count: number;
+        }> = [];
+
+        if (localByPlace) {
+          try {
+            const { createServerSupabaseClient } = await import(
+              "./supabaseClient"
+            );
+            const supabase = createServerSupabaseClient();
+
+            const { data: aggData, error: aggErr } = await supabase.rpc(
+              "get_top_drinks_for_cafe",
+              {
+                p_place_id: localByPlace.id,
+                min_check_ins: 1,
+                max_results: 3,
+              },
+            );
+
+            if (!aggErr && aggData) {
+              topDrinks = aggData.map((row: any) => ({
+                drinkId: row.drink_id,
+                drinkName: row.drink_name,
+                avgRating: parseFloat(row.avg_rating),
+                count: parseInt(row.check_in_count, 10),
+              }));
+
+              try {
+                console.log(
+                  `[cafe-detail] placeId=${id} topDrinksCount=${topDrinks.length}`,
+                );
+              } catch (_) {}
+            }
+          } catch (e) {
+            console.error("Failed to compute top drinks:", e);
+            topDrinks = [];
           }
         }
-        const top = Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3);
-        const topDrinks = await Promise.all(
-          top.map(async ([drinkId, count]) => {
-            const d = await storage.getDrink(drinkId);
-            return { drinkId, name: d?.name ?? drinkId, count };
-          }),
-        );
 
         const nameEn =
           (dbRow && (dbRow.name_en ?? dbRow.name_ar)) ??
@@ -1367,8 +2087,30 @@ export async function registerRoutes(
       const token =
         (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
         undefined;
-      const userId = await getUserIdFromToken(token);
-      if (!userId) return res.status(401).json({ error: "Missing auth token" });
+      if (!token) return res.status(401).json({ error: "Missing auth token" });
+
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
+
+      if (!userId) return res.status(401).json({ error: "Invalid auth token" });
 
       // Fetch canonical profile fields from Supabase `profiles` table.
       let profileRow: any = null;
@@ -1390,15 +2132,37 @@ export async function registerRoutes(
 
       // Invariant: authenticated users MUST have a DB-backed profile row.
       if (!profileRow) {
-        throw new Error("Invariant violation: authenticated user has no profile");
+        throw new Error(
+          "Invariant violation: authenticated user has no profile",
+        );
       }
 
+      // Compute counts directly from the DB rather than relying on memory-backed
+      // storage (which may be empty for authenticated users). This ensures the
+      // profile shows accurate numbers even when in-memory maps are unused.
       const profile = (await storage.getUserProfile(userId)) as any;
+      let checkInsCount = 0;
+      let uniqueDrinksCount = 0;
+      try {
+        const { createServerSupabaseClient } = await import("./supabaseClient");
+        const supabase = createServerSupabaseClient(token);
+        const { data: userCheckIns } = await supabase
+          .from("check_ins")
+          .select("place_id")
+          .eq("user_id", userId);
+        if (Array.isArray(userCheckIns)) {
+          checkInsCount = userCheckIns.length;
+          uniqueDrinksCount = new Set(
+            userCheckIns.map((r: any) => r.place_id).filter(Boolean),
+          ).size;
+        }
+      } catch (e) {
+        // ignore DB count errors and fall back to memory-backed counts
+        checkInsCount = profile?.checkInsCount ?? 0;
+        uniqueDrinksCount = profile?.uniqueDrinksCount ?? 0;
+      }
 
-      // If a DB-backed `profiles` row exists, return only those canonical fields
-      // (the client must treat these as authoritative). We still include counts
-      // from memory-backed storage when present, but we do NOT fall back to
-      // demo/static profile fields when a DB row is present.
+      // If a DB-backed `profiles` row exists, return canonical fields and DB counts.
       if (profileRow) {
         const merged = {
           id: userId,
@@ -1407,10 +2171,10 @@ export async function registerRoutes(
           avatarUrl: profileRow.avatar_url ?? null,
           bio: profileRow.bio ?? null,
           isComplete: Boolean(profileRow.is_complete ?? false),
-          checkInsCount: profile?.checkInsCount ?? 0,
+          checkInsCount: checkInsCount,
           followersCount: profile?.followersCount ?? 0,
           followingCount: profile?.followingCount ?? 0,
-          uniqueDrinksCount: profile?.uniqueDrinksCount ?? 0,
+          uniqueDrinksCount: uniqueDrinksCount,
         };
 
         return res.json(merged);
@@ -1448,10 +2212,27 @@ export async function registerRoutes(
       // Only allow demo data for unauthenticated callers. If a valid
       // Supabase auth token is present, refuse to serve demo data so real
       // users never see or interact with demo users.
-      const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || undefined;
-      const demoViewer = await getUserIdFromToken(token);
+      const token =
+        (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
+        undefined;
+      let demoViewer: string | null = null;
+      try {
+        demoViewer = await getUserIdFromToken(token);
+      } catch (authErr) {
+        // For demo endpoint, if unreachable, just allow demo (don't block with 503)
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          demoViewer = null; // treat as unauthenticated
+        } else if ((authErr as any)?.sessionInvalid === true) {
+          // Invalid session also means can't auth, so allow demo
+          demoViewer = null;
+        } else {
+          throw authErr;
+        }
+      }
       if (demoViewer) {
-        return res.status(403).json({ error: "Demo is only available to unauthenticated users" });
+        return res
+          .status(403)
+          .json({ error: "Demo is only available to unauthenticated users" });
       }
 
       const demo = {
@@ -1475,6 +2256,333 @@ export async function registerRoutes(
   // Profile rows are now created by the database trigger; no server-side
   // endpoint is necessary to ensure profile rows exist.
 
+  // Server-side signup endpoint: creates auth user and profile atomically
+  app.post("/api/signup", async (req, res) => {
+    try {
+      const { email, password, termsAccepted, privacyAccepted } =
+        req.body || {};
+      if (!email || !password)
+        return res.status(400).json({ error: "missing email or password" });
+      if (!termsAccepted || !privacyAccepted)
+        return res.status(400).json({ error: "LEGAL_ACCEPTANCE_REQUIRED" });
+
+      const { createServerSupabaseClient } = await import("./supabaseClient");
+      const supabase = createServerSupabaseClient(); // uses service key
+      console.log("signup_attempt", email);
+      // Ensure service role key is available (admin operations require it)
+      if (!process.env.SUPABASE_SERVICE_KEY) {
+        console.error("/api/signup: SUPABASE_SERVICE_KEY not configured");
+        return res.status(500).json({ error: "SERVICE_KEY_MISSING" });
+      }
+
+      // Pre-check: inspect whether a Supabase auth user for this email exists
+      // and whether it is already confirmed. This uses the debug helper which
+      // logs details server-side and also returns the found user object.
+      try {
+        const existingUser = await debugInspectEmailConfirmation(email);
+        if (existingUser) {
+          const isConfirmed = !!existingUser.email_confirmed_at;
+          if (isConfirmed) {
+            // Confirmed users should not be allowed to sign up again.
+            return res.status(409).json({
+              error: "email_already_confirmed",
+              message:
+                "This email is already registered. Please sign in instead.",
+            });
+          }
+
+          // Unconfirmed user exists: resend confirmation email and return
+          try {
+            console.log("email_exists_detected", email);
+            await supabase.auth.resend({ type: "signup", email } as any);
+            console.log("confirmation_resent", email);
+            return res.status(200).json({
+              message:
+                "This email is already registered. We’ve resent your confirmation email.",
+              status: "confirmation_resent",
+            });
+          } catch (resendErr: any) {
+            console.error("[signup] resend_failed", resendErr);
+            const resendMsg = (resendErr?.message ?? "").toLowerCase();
+            if (resendMsg.includes("rate") || resendMsg.includes("too many")) {
+              return res.status(429).json({
+                message:
+                  "Please wait a moment before requesting another confirmation email.",
+                status: "rate_limited",
+              });
+            }
+            return res.status(400).json({
+              message:
+                "Something went wrong while creating your account. Please try again.",
+              status: "resend_failed",
+            });
+          }
+        }
+      } catch (preCheckErr: any) {
+        console.error("/api/signup: pre-check failed", preCheckErr);
+        // Continue to normal signup flow if pre-check fails to avoid blocking
+        // users due to debug inspection problems.
+      }
+
+      // Create the auth user using the service role key. Wrap call to surface
+      // library errors clearly and tolerate different return shapes.
+      let createdUserId: string | null = null;
+      let createdUserObj: any = null;
+      try {
+        // Use non-admin signUp so Supabase sends the confirmation email
+        const createRes: any = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              terms_accepted: termsAccepted === true,
+              privacy_accepted: privacyAccepted === true,
+            },
+          },
+        } as any);
+
+        // Supabase admin createUser may either throw or return an object
+        // with .error set when the operation failed. Normalize both cases.
+        const data = createRes?.data ?? createRes;
+        const userObj = data?.user ?? data;
+        createdUserId = userObj?.id ?? null;
+        createdUserObj = userObj ?? null;
+
+        // If the library returned an error object instead of throwing,
+        // map known auth errors to friendly messages and log details.
+        const respError = createRes?.error ?? null;
+        if (respError) {
+          console.error("[signup]", respError);
+          const respCode = respError?.code ?? "";
+          const respMsg = String(respError?.message ?? "").toLowerCase();
+
+          // Rate limit from Supabase when sending emails
+          if (respCode === "over_email_send_rate_limit") {
+            return res.status(429).json({
+              message:
+                "Please wait a moment before requesting another confirmation email.",
+              status: "rate_limited",
+            });
+          }
+
+          if (
+            respCode === "email_exists" ||
+            respCode === "user_already_exists" ||
+            respMsg.includes("already exists") ||
+            respMsg.includes("user with email")
+          ) {
+            try {
+              const { data: users, error: fetchErr } =
+                await supabase.auth.admin.listUsers();
+              const existingUser = users?.users?.find(
+                (u: any) => u.email?.toLowerCase() === email.toLowerCase(),
+              );
+
+              if (existingUser) {
+                // DEBUG: inspect confirmation status for this email
+                await debugInspectEmailConfirmation(email);
+                const isConfirmed = !!existingUser.email_confirmed_at;
+                if (!isConfirmed) {
+                  try {
+                    console.log("email_exists_detected", email);
+                    await supabase.auth.resend({
+                      type: "signup",
+                      email,
+                    } as any);
+                    console.log("confirmation_resent", email);
+                    return res.status(200).json({
+                      message:
+                        "This email is already registered. We’ve resent your confirmation email.",
+                      status: "confirmation_resent",
+                    });
+                  } catch (resendErr: any) {
+                    console.error("[signup] resend_failed", resendErr);
+                    const resendMsg = (resendErr?.message ?? "").toLowerCase();
+                    if (
+                      resendMsg.includes("rate") ||
+                      resendMsg.includes("too many")
+                    ) {
+                      return res.status(429).json({
+                        message:
+                          "Please wait a moment before requesting another confirmation email.",
+                        status: "rate_limited",
+                      });
+                    }
+                    return res.status(400).json({
+                      message:
+                        "Something went wrong while creating your account. Please try again.",
+                      status: "resend_failed",
+                    });
+                  }
+                } else {
+                  return res.status(409).json({
+                    message:
+                      "An account with this email already exists. Please log in.",
+                    status: "email_already_confirmed",
+                  });
+                }
+              }
+
+              return res.status(409).json({
+                message: "This email is already registered.",
+                status: "email_exists",
+              });
+            } catch (checkErr: any) {
+              console.error("[signup] failed_to_check_user", checkErr);
+              return res.status(400).json({
+                message:
+                  "Something went wrong while creating your account. Please try again.",
+                status: "check_failed",
+              });
+            }
+          }
+
+          console.error("[signup] create_user_error", respError);
+          return res.status(400).json({
+            message:
+              "Something went wrong while creating your account. Please try again.",
+            status: "auth_error",
+          });
+        }
+
+        if (!createdUserId) {
+          console.error("[signup] createUser_no_id", createRes);
+          return res.status(400).json({
+            message:
+              "Something went wrong while creating your account. Please try again.",
+            status: "no_user_id",
+          });
+        }
+      } catch (createErr: any) {
+        // auth-js may throw structured errors with __isAuthError
+        console.error("[signup]", createErr);
+        const code = createErr?.code ?? "unexpected_failure";
+        const message = (createErr?.message ?? "").toLowerCase();
+
+        // Map rate limit errors explicitly
+        if (code === "over_email_send_rate_limit") {
+          return res.status(429).json({
+            message:
+              "Please wait a moment before requesting another confirmation email.",
+            status: "rate_limited",
+          });
+        }
+
+        if (
+          code === "email_exists" ||
+          code === "user_already_exists" ||
+          message.includes("already exists") ||
+          message.includes("user with email")
+        ) {
+          try {
+            const { data: users, error: fetchErr } =
+              await supabase.auth.admin.listUsers();
+            const existingUser = users?.users?.find(
+              (u: any) => u.email?.toLowerCase() === email.toLowerCase(),
+            );
+
+            if (existingUser) {
+              // DEBUG: inspect confirmation status for this email
+              await debugInspectEmailConfirmation(email);
+              const isConfirmed = !!existingUser.email_confirmed_at;
+
+              if (!isConfirmed) {
+                try {
+                  console.log("email_exists_detected", email);
+                  await supabase.auth.resend({
+                    type: "signup",
+                    email,
+                  } as any);
+                  console.log("confirmation_resent", email);
+                  return res.status(200).json({
+                    message:
+                      "This email is already registered. We’ve resent your confirmation email.",
+                    status: "confirmation_resent",
+                  });
+                } catch (resendErr: any) {
+                  console.error("[signup] resend_failed", resendErr);
+                  const resendMsg = (resendErr?.message ?? "").toLowerCase();
+                  if (
+                    resendMsg.includes("rate") ||
+                    resendMsg.includes("too many")
+                  ) {
+                    return res.status(429).json({
+                      message:
+                        "Please wait a moment before requesting another confirmation email.",
+                      status: "rate_limited",
+                    });
+                  }
+                  return res.status(400).json({
+                    message:
+                      "Something went wrong while creating your account. Please try again.",
+                    status: "resend_failed",
+                  });
+                }
+              } else {
+                return res.status(409).json({
+                  error: "Email already registered. Please log in.",
+                  status: "email_already_confirmed",
+                });
+              }
+            }
+
+            return res.status(409).json({
+              message: "This email is already registered.",
+              status: "email_exists",
+            });
+          } catch (checkErr: any) {
+            console.error(
+              "/api/signup: failed to check existing user",
+              checkErr,
+            );
+            return res.status(500).json({
+              error: "Failed to process signup. Please try again.",
+              status: "check_failed",
+            });
+          }
+        }
+
+        // For other auth errors, return generic failure
+        return res.status(500).json({
+          error: "Failed to create user",
+          details: String(code),
+          status: "auth_error",
+        });
+      }
+
+      // Update the profile row (created by insert trigger or default) with
+      // explicit acceptance flags. Use UPDATE instead of INSERT to avoid
+      // triggering CHECK constraints during creation.
+      // DEBUG: inspect confirmation status after successful signup
+      await debugInspectEmailConfirmation(email);
+      const { error: updateErr } = await supabase
+        .from("profiles")
+        .update({
+          terms_accepted: true,
+          privacy_accepted: true,
+          legal_accepted: true,
+          legal_accepted_at: new Date().toISOString(),
+        })
+        .eq("user_id", createdUserId);
+
+      if (updateErr) {
+        // Rollback: delete the created auth user
+        try {
+          await supabase.auth.admin.deleteUser(createdUserId as string);
+        } catch (delErr) {
+          console.error("/api/signup: failed to rollback user", delErr);
+        }
+        console.error("/api/signup: failed to update profile", updateErr);
+        return res.status(500).json({ error: "Failed to update profile" });
+      }
+
+      return res.json({ user: createdUserObj ?? { id: createdUserId } });
+    } catch (e) {
+      console.error("/api/signup error", e);
+      return res.status(500).json({ error: "signup_failed" });
+    }
+  });
+
   // Update current user's profile
   app.put("/api/profile", async (req, res) => {
     try {
@@ -1483,7 +2591,27 @@ export async function registerRoutes(
         undefined;
       if (!token) return res.status(401).json({ error: "Missing auth token" });
 
-      const userId = (await getUserIdFromToken(token)) ?? null;
+      let userId: string | null = null;
+      try {
+        userId = (await getUserIdFromToken(token)) ?? null;
+      } catch (authErr) {
+        // SUPABASE_UNREACHABLE: network/DNS failure
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        // SESSION_INVALID: user was deleted while token was valid
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
+
       if (!userId) return res.status(401).json({ error: "Invalid auth token" });
 
       const payload: any = {};
@@ -1595,7 +2723,7 @@ export async function registerRoutes(
         "discover",
         "profile",
         "settings",
-        "cafnote",
+        "refote",
       ];
 
       const USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9._]{1,18})[a-z0-9]$/;
@@ -1634,24 +2762,151 @@ export async function registerRoutes(
   app.get("/api/profile/check-ins", async (req, res) => {
     try {
       const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
+        (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
         undefined;
-      const userId = await getUserIdFromToken(token);
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
-      const checkIns = await storage.getCheckInsByUser(userId, token);
-      res.json(checkIns);
+
+      const { createServerSupabaseClient } = await import("./supabaseClient");
+      const supabase = createServerSupabaseClient(token);
+
+      const { data: rows, error } = await supabase
+        .from("check_ins")
+        .select(
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, temperature, created_at",
+        )
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      // Fetch canonical profile row for the user to populate user snapshot
+      const { data: profileRow } = await supabase
+        .from("profiles")
+        .select("user_id, username, display_name, avatar_url")
+        .eq("user_id", userId)
+        .limit(1)
+        .maybeSingle();
+
+      // Fetch related cafes in bulk
+      const placeIds = Array.from(
+        new Set((rows || []).map((r: any) => r.place_id).filter(Boolean)),
+      );
+      let cafesMap: Record<string, any> = {};
+      if (placeIds.length > 0) {
+        const { data: cafes } = await supabase
+          .from("coffee_places")
+          .select(
+            "id, google_place_id, name_en, name_ar, city_en, city_ar, photo_reference, rating, reviews",
+          )
+          .in("id", placeIds as any[]);
+        (cafes || []).forEach((c: any) => {
+          cafesMap[c.id] = c;
+        });
+      }
+
+      const mapped = (rows || []).map((r: any) => {
+        const cafe = r.place_id
+          ? ((): any => {
+              const c = cafesMap[r.place_id];
+              if (!c) return null;
+              return {
+                id: c.id,
+                placeId: c.google_place_id ?? null,
+                nameEn: c.name_en ?? null,
+                nameAr: c.name_ar ?? null,
+                cityEn: c.city_en ?? null,
+                cityAr: c.city_ar ?? null,
+                photoReference: c.photo_reference ?? null,
+                rating: c.rating ?? null,
+                reviews: c.reviews ?? null,
+              };
+            })()
+          : null;
+
+        return {
+          id: r.id,
+          userId: r.user_id,
+          drinkId: r.drink_name || "",
+          cafeId: r.place_id ?? null,
+          roasterId: null,
+          rating: r.rating ?? 0,
+          notes: r.notes ?? null,
+          photoUrl: r.photo_url ?? null,
+          tastingNotes: ((): any[] => {
+            const t = r.tasting_notes;
+            if (Array.isArray(t)) return t;
+            if (t == null) return [];
+            try {
+              return JSON.parse(t);
+            } catch (_) {
+              return [];
+            }
+          })(),
+          temperature: r.temperature ?? null,
+          createdAt: r.created_at ? new Date(r.created_at) : new Date(),
+          user: {
+            id: userId,
+            username: profileRow?.username ?? null,
+            displayName: profileRow?.display_name ?? null,
+            avatarUrl: profileRow?.avatar_url ?? null,
+          },
+          drink: {
+            id: r.drink_name || "",
+            name: r.drink_name || "",
+          },
+          cafe,
+          likesCount: 0,
+          isLiked: false,
+        };
+      });
+
+      res.json(mapped);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch check-ins" });
+      console.error("/api/profile/check-ins error", error);
+      res.status(500).json([]);
     }
   });
 
   // Toggle follow a user
   app.post("/api/users/:id/follow", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const isFollowing = await storage.toggleFollow(userId, req.params.id);
       res.json({ isFollowing });
@@ -1665,10 +2920,25 @@ export async function registerRoutes(
   // Send a friend request to a user
   app.post("/api/users/:id/friend-request", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const request = await storage.sendFriendRequest(userId, req.params.id);
       res.status(201).json(request);
@@ -1680,10 +2950,25 @@ export async function registerRoutes(
   // Get incoming friend requests for current user
   app.get("/api/friend-requests", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const incoming = await storage.getIncomingFriendRequests(userId);
       res.json(incoming);
@@ -1695,10 +2980,25 @@ export async function registerRoutes(
   // Accept friend request
   app.post("/api/friend-requests/:id/accept", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const accepted = await storage.acceptFriendRequest(req.params.id, userId);
       if (!accepted)
@@ -1714,10 +3014,25 @@ export async function registerRoutes(
   // Decline friend request
   app.post("/api/friend-requests/:id/decline", async (req, res) => {
     try {
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const ok = await storage.declineFriendRequest(req.params.id, userId);
       res.json({ ok });
@@ -1730,13 +3045,31 @@ export async function registerRoutes(
   app.get("/api/users/:id/relationship", async (req, res) => {
     try {
       const otherId = req.params.id;
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
       const isFollowing = await storage.isFollowing(userId, otherId);
-      const friendRequest = await storage.getFriendRequestBetween(userId, otherId);
+      const friendRequest = await storage.getFriendRequestBetween(
+        userId,
+        otherId,
+      );
       res.json({ isFollowing, friendRequest });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch relationship" });
@@ -1839,11 +3172,27 @@ export async function registerRoutes(
   app.get("/api/users/:id/check-ins", async (req, res) => {
     try {
       // Only allow a user to fetch their own check-ins
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const requesterId = await getUserIdFromToken(token);
-      if (!requesterId) return res.status(401).json({ error: "Missing auth token" });
+      const token = req.headers.authorization || undefined;
+      let requesterId: string | null = null;
+      try {
+        requesterId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
+      if (!requesterId)
+        return res.status(401).json({ error: "Missing auth token" });
       if (requesterId !== req.params.id) {
         return res.status(403).json({ error: "Not allowed" });
       }
@@ -1862,10 +3211,25 @@ export async function registerRoutes(
       // - OR the current user liked someone else's check-in
       const activities = await storage.getActivity();
       const relevant: any[] = [];
-      const token =
-        (req.headers.authorization || "").replace(/^Bearer\\s+/i, "") ||
-        undefined;
-      const userId = await getUserIdFromToken(token);
+      const token = req.headers.authorization || undefined;
+      let userId: string | null = null;
+      try {
+        userId = await getUserIdFromToken(token);
+      } catch (authErr) {
+        if ((authErr as any)?.code === "SUPABASE_UNREACHABLE") {
+          return res.status(503).json({
+            error: "SERVICE_UNAVAILABLE",
+            source: "supabase",
+          });
+        }
+        if ((authErr as any)?.sessionInvalid === true) {
+          return res.status(403).json({
+            error: "SESSION_INVALID",
+            details: "Your session has expired. Please sign in again.",
+          });
+        }
+        throw authErr;
+      }
       if (!userId) return res.status(401).json({ error: "Missing auth token" });
 
       for (const a of activities) {
@@ -1926,15 +3290,9 @@ export async function registerRoutes(
       "places.businessStatus",
     ].join(",");
 
-    // dynamic location bias from test file
-    const loc = getTestLocation();
-    const locationBias = {
-      point: { lat: loc.lat, lng: loc.lng },
-      radiusMeters: SEARCH_RADIUS_METERS,
-    };
-    // console.log(
-    //   `[places] searchText call: radius=${SEARCH_RADIUS_METERS} (${SEARCH_RADIUS_SOURCE}) location=${loc.lat},${loc.lng}`,
-    // );
+    // No dynamic test-location bias here. Do not read temp_location.json
+    // at runtime — the Places SearchText endpoint will be called without
+    // a locationBias so results are globally relevant for the query.
 
     // perform two calls: Arabic and English, then merge
     // Use rate-limited fetches for Places v1 calls. If the limiter blocks
@@ -1953,7 +3311,6 @@ export async function registerRoutes(
         body: JSON.stringify({
           query: searchText,
           locationRestriction,
-          locationBias,
           includedType: "CAFE",
           pageSize: 50,
         }),
@@ -1969,7 +3326,6 @@ export async function registerRoutes(
         body: JSON.stringify({
           query: searchText,
           locationRestriction,
-          locationBias,
           includedType: "CAFE",
           pageSize: 50,
         }),
@@ -2109,6 +3465,27 @@ export async function registerRoutes(
     return mapped;
   }
 
+  // Dev override status endpoint (dev-only): returns whether a server-side
+  // temp_location.json override is active and the override coords. This
+  // endpoint is intentionally lightweight and only used by the client to
+  // decide whether to attempt Discover when the browser has no geolocation.
+  app.get("/api/dev-location-status", async (req, res) => {
+    try {
+      const requestId = `dev-status-${Date.now()}`;
+      const { lat, lng, overridden } = applyLocationOverride(
+        undefined,
+        undefined,
+        requestId,
+      );
+      if (overridden) {
+        return res.json({ enabled: true, lat, lng });
+      }
+      return res.json({ enabled: false });
+    } catch (err) {
+      return res.json({ enabled: false });
+    }
+  });
+
   // Image proxy for allowed remote hosts (prevents exposing API keys / avoids CORS issues)
   app.get("/api/proxy", async (req, res) => {
     try {
@@ -2231,6 +3608,77 @@ export async function registerRoutes(
       res.send(buffer);
     } catch (error) {
       res.status(500).json({ error: "Places media proxy error" });
+    }
+  });
+
+  // Customer feedback endpoint - sends an email to support
+  app.post("/api/feedback", async (req, res) => {
+    try {
+      const { name, email, message } = req.body || {};
+
+      // Server-side validation: all fields required
+      if (!name || String(name).trim() === "") {
+        return res.status(400).json({ error: "Name is required" });
+      }
+      if (!email || String(email).trim() === "") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+      if (!message || String(message).trim() === "") {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(String(email).trim())) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      const RESEND_API_KEY = process.env.RESEND_API_KEY;
+      const FEEDBACK_FROM_EMAIL =
+        process.env.FEEDBACK_FROM_EMAIL || "Refote <no-reply@refote.com>";
+      const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@refote.com";
+
+      if (!RESEND_API_KEY) {
+        console.error("[feedback] RESEND_API_KEY not configured");
+        return res.status(500).json({
+          error: "Unable to send feedback right now. Please try again later.",
+        });
+      }
+
+      const { Resend } = await import("resend");
+      const resend = new Resend(RESEND_API_KEY);
+
+      const emailBody = `
+Name: ${String(name).trim()}
+Email: ${String(email).trim()}
+
+Message:
+${String(message).trim()}
+      `;
+
+      const result = await resend.emails.send({
+        from: FEEDBACK_FROM_EMAIL,
+        to: SUPPORT_EMAIL,
+        subject: "New Feedback from Refote",
+        text: emailBody,
+      });
+
+      if (result.error) {
+        console.error("[feedback] Resend error", result.error);
+        return res.status(500).json({
+          error: "Unable to send feedback right now. Please try again later.",
+        });
+      }
+
+      console.info("[feedback] sent successfully", {
+        email: String(email).trim(),
+      });
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error("[feedback] unexpected error", err);
+      return res.status(500).json({
+        error: "Unable to send feedback right now. Please try again later.",
+      });
     }
   });
 

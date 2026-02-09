@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-// accept CLI args --email= and --password= or env vars DEV_TEST_EMAIL/DEV_TEST_PASSWORD
+// accept CLI args --email= and --password= (do NOT fall back to env dev users)
 const arg = (name) => {
   const a = process.argv.find((s) => s.startsWith(`--${name}=`));
   return a ? a.split("=")[1] : undefined;
@@ -18,8 +18,8 @@ const arg = (name) => {
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const anonKey = process.env.SUPABASE_ANON_KEY;
-const email = arg("email") || process.env.DEV_TEST_EMAIL;
-const password = arg("password") || process.env.DEV_TEST_PASSWORD;
+const email = arg("email");
+const password = arg("password");
 
 if (!supabaseUrl || !anonKey) {
   console.error(
@@ -31,7 +31,7 @@ if (!supabaseUrl || !anonKey) {
 
 if (!email || !password) {
   console.error(
-    "Please provide credentials via --email=... --password=... or set DEV_TEST_EMAIL/DEV_TEST_PASSWORD in server/.env",
+    "Please provide credentials via --email=... --password=... (no DEV_TEST fallbacks allowed)",
   );
   process.exitCode = 1;
   process.exit();

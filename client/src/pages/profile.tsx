@@ -1,4 +1,5 @@
 import { UserProfileHeader } from "@/components/user-profile-header";
+import { Link } from "wouter";
 import { CheckInCard } from "@/components/check-in-card";
 import { CafeCard } from "@/components/cafe-card";
 import {
@@ -6,14 +7,16 @@ import {
   CheckInCardSkeleton,
 } from "@/components/loading-skeleton";
 import { EmptyState } from "@/components/empty-state";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { LanguageToggle } from "@/components/language-toggle";
+import TopHeader from "@/components/top-header";
 import { useI18n } from "@/lib/i18n";
+import LocalizedText, {
+  localizedClassForText,
+} from "@/components/LocalizedText";
 import AuthForm from "@/components/auth-form";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Coffee, Store } from "lucide-react";
+import { Coffee, Store, User } from "lucide-react";
 import type { UserProfile, CheckInWithDetails } from "@shared/schema";
 import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
@@ -21,13 +24,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { PhotoUpload } from "@/components/photo-upload";
+import { PhotoUpload } from "@/components/photo-upload.canonical";
 import { validateUsername } from "@/lib/validators";
 
 export default function Profile() {
   const { t, isRTL, language } = useI18n();
   const [activeTab, setActiveTab] = useState("checkins");
-  const { user } = useAuth();
+  const { user, authResolved } = useAuth();
   const [, setLocation] = useLocation();
 
   // Enforce: profile page only exists for authenticated users.
@@ -105,20 +108,16 @@ export default function Profile() {
       setUsernameValid(false);
       setUsernameAvailable(null);
       setUsernameChecking(false);
-      if (reason === "length")
-        setUsernameMessage("Username must be 3–20 characters");
+      if (reason === "length") setUsernameMessage(t("signup.username.length"));
       else if (reason === "reserved")
-        setUsernameMessage("This username is reserved");
-      else
-        setUsernameMessage(
-          "Only lowercase letters, numbers, . and _ allowed; cannot start or end with . or _",
-        );
+        setUsernameMessage(t("signup.username.reserved"));
+      else setUsernameMessage(t("signup.username.invalidChars"));
       return;
     }
 
     setUsernameValid(true);
     setUsernameChecking(true);
-    setUsernameMessage("Checking availability...");
+    setUsernameMessage(t("signup.username.checking"));
     setUsernameAvailable(null);
 
     const timer = setTimeout(async () => {
@@ -131,7 +130,7 @@ export default function Profile() {
         if (!isActive) return;
         if (data.available) {
           setUsernameAvailable(true);
-          setUsernameMessage("Username available ✅");
+          setUsernameMessage(t("signup.username.available"));
         } else {
           // If the username is taken but it matches the current user's username,
           // consider it available (user is keeping their own username).
@@ -141,16 +140,16 @@ export default function Profile() {
           } else {
             setUsernameAvailable(false);
             if (data.reason === "taken")
-              setUsernameMessage("Username already taken ❌");
+              setUsernameMessage(t("signup.username.taken"));
             else if (data.reason === "reserved")
-              setUsernameMessage("This username is reserved ❌");
-            else setUsernameMessage("Username not available ❌");
+              setUsernameMessage(t("signup.username.reserved"));
+            else setUsernameMessage(t("signup.username.notAvailable"));
           }
         }
       } catch (e) {
         if (!isActive) return;
         setUsernameAvailable(false);
-        setUsernameMessage("Error checking username");
+        setUsernameMessage(t("signup.username.errorChecking"));
       } finally {
         if (isActive) setUsernameChecking(false);
       }
@@ -172,7 +171,7 @@ export default function Profile() {
     }
   }, [profile]);
 
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  // Avatar input is handled by the shared PhotoUpload component
 
   const updateProfile = useMutation({
     mutationFn: async (payload: any) => {
@@ -195,6 +194,8 @@ export default function Profile() {
       const res = await apiRequest("GET", "/api/profile/check-ins");
       return res.json();
     },
+    // Only fetch profile check-ins when auth has resolved and a user is authenticated.
+    enabled: authResolved && !!user,
   });
 
   const uniqueCafes = (checkIns || [])
@@ -221,25 +222,10 @@ export default function Profile() {
       className="min-h-screen bg-background pb-20"
       dir={isRTL ? "rtl" : "ltr"}
     >
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-        <div className="relative">
-          <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-            <a
-              href="/"
-              className="pointer-events-auto font-serif text-xl font-bold"
-            >
-              Cafnote
-            </a>
-          </div>
-          <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-            <div />
-            <div className="flex items-center gap-1">
-              <LanguageToggle />
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </header>
+      <TopHeader
+        titleKey="nav.profile"
+        leftIcon={<User className="h-4 w-4 text-primary" />}
+      />
 
       <main className="max-w-2xl mx-auto">
         {profileLoading || demoLoading ? (
@@ -258,60 +244,34 @@ export default function Profile() {
                   <div>
                     <Input
                       {...form.register("username")}
-                      placeholder="Username"
+                      placeholder={t("profile.usernamePlaceholder")}
+                      className={localizedClassForText(
+                        t("profile.usernamePlaceholder"),
+                      )}
                     />
                     <div className="text-xs mt-1 text-muted-foreground">
-                      {usernameMessage}
+                      <LocalizedText>{usernameMessage}</LocalizedText>
                     </div>
                   </div>
 
                   <Input
                     {...form.register("displayName")}
                     placeholder={t("profile.displayNamePlaceholder")}
+                    className={localizedClassForText(
+                      t("profile.displayNamePlaceholder"),
+                    )}
                   />
                   <div>
                     <div className="text-sm font-medium mb-2">
-                      {t("profile.avatarLabel")}
+                      <LocalizedText>{t("profile.avatarLabel")}</LocalizedText>
                     </div>
                     <div>
-                      <input
-                        ref={avatarInputRef}
-                        id="avatar-input"
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              const result = reader.result as string;
-                              form.setValue("avatarUrl", result);
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                        data-testid="input-avatar-form"
+                      <PhotoUpload
+                        photoUrl={form.watch("avatarUrl")}
+                        onPhotoChange={(url) => form.setValue("avatarUrl", url)}
+                        title={t("profile.avatarLabel")}
+                        hint={t("photo.dragDrop")}
                       />
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
-                          onClick={() => avatarInputRef.current?.click()}
-                        >
-                          {t("common.changePhoto")}
-                        </button>
-                        {form.watch("avatarUrl") && (
-                          <button
-                            type="button"
-                            className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
-                            onClick={() => form.setValue("avatarUrl", "")}
-                          >
-                            {t("common.remove")}
-                          </button>
-                        )}
-                      </div>
                     </div>
                   </div>
 
@@ -320,11 +280,14 @@ export default function Profile() {
                   <Textarea
                     {...form.register("bio")}
                     placeholder={t("profile.bioPlaceholder")}
+                    className={localizedClassForText(
+                      t("profile.bioPlaceholder"),
+                    )}
                   />
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      className="inline-flex items-center rounded-md bg-primary px-3 py-2 text-sm font-medium text-white"
+                      className="flex-1 flex items-center justify-center rounded-md bg-primary px-3 py-2 text-sm font-medium text-white"
                       onClick={() => updateProfile.mutate(form.getValues())}
                       disabled={
                         form.getValues().username !==
@@ -332,14 +295,18 @@ export default function Profile() {
                         (!usernameValid || usernameAvailable !== true)
                       }
                     >
-                      {usernameChecking ? "Checking..." : t("common.save")}
+                      {usernameChecking ? (
+                        <LocalizedText>{t("signup.checking")}</LocalizedText>
+                      ) : (
+                        <LocalizedText>{t("common.save")}</LocalizedText>
+                      )}
                     </button>
                     <button
                       type="button"
-                      className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
+                      className="flex-1 flex items-center justify-center rounded-md border px-3 py-2 text-sm"
                       onClick={() => setEditing(false)}
                     >
-                      {t("common.cancel")}
+                      <LocalizedText>{t("common.cancel")}</LocalizedText>
                     </button>
                   </div>
                 </div>
@@ -361,7 +328,7 @@ export default function Profile() {
                 data-testid="tab-checkins"
               >
                 <Coffee className="h-4 w-4 me-2" />
-                {t("profile.myCheckIns")}
+                <LocalizedText>{t("profile.myCheckIns")}</LocalizedText>
               </TabsTrigger>
               <TabsTrigger
                 value="cafes"
@@ -369,7 +336,7 @@ export default function Profile() {
                 data-testid="tab-cafes"
               >
                 <Store className="h-4 w-4 me-2" />
-                {t("profile.uniqueDrinks")}
+                <LocalizedText>{t("profile.uniqueDrinks")}</LocalizedText>
               </TabsTrigger>
               {/* Badges and Wishlist tabs removed temporarily */}
             </TabsList>

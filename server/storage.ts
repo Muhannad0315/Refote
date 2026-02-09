@@ -88,9 +88,12 @@ export interface IStorage {
 
   getCheckIns(): Promise<CheckInWithDetails[]>;
   getCheckInsByUser(userId: string): Promise<CheckInWithDetails[]>;
-  getCheckIn(id: string): Promise<CheckIn | undefined>;
+  getCheckIn(id: string, supabaseToken?: string): Promise<CheckIn | undefined>;
   createCheckIn(checkIn: InsertCheckIn): Promise<CheckIn>;
-  getCheckInWithDetails(id: string): Promise<CheckInWithDetails | undefined>;
+  getCheckInWithDetails(
+    id: string,
+    supabaseToken?: string,
+  ): Promise<CheckInWithDetails | undefined>;
   updateCheckIn(
     id: string,
     update: Partial<InsertCheckIn>,
@@ -152,6 +155,15 @@ export class MemStorage implements IStorage {
     // no implicit current user id — routes must provide an authenticated
     // Supabase user id when required. No seeded users are present to avoid
     // identity mismatches; demo data (roasters/drinks) may remain read-only.
+
+    // seed demo data in non-production environments
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        this.seedData();
+      } catch (err) {
+        console.warn("[storage] seedData failed", err);
+      }
+    }
   }
 
   private seedData() {
@@ -270,24 +282,11 @@ export class MemStorage implements IStorage {
     ];
     drinks.forEach((d) => this.drinks.set(d.id, d));
 
-    const likes: Like[] = [
-      { id: "like-1", userId: "user-2", checkInId: "checkin-1" },
-      { id: "like-2", userId: "user-3", checkInId: "checkin-1" },
-      { id: "like-3", userId: "user-1", checkInId: "checkin-2" },
-    ];
-    likes.forEach((l) => this.likes.set(l.id, l));
-
-    // start with empty activity feed
+    // no seeded likes/follows referencing fake users — authenticated user
+    // identities must come from Supabase. Keep activity/follows empty.
     const activities: Activity[] = [];
-    activities.forEach((a) => this.activities.set(a.id, a));
-
-    const follows: Follow[] = [
-      // start with no follows for `coffeeaddict` (user-1)
-      // keep mutual follow between coffeesocial (user-8) and Muhannad (user-9)
-      { id: "follow-8", followerId: "user-8", followingId: "user-9" },
-      { id: "follow-9", followerId: "user-9", followingId: "user-8" },
-    ];
-    follows.forEach((f) => this.follows.set(f.id, f));
+    // intentionally do NOT seed activities, likes, or follows with demo user ids
+    // so that authenticated flows always rely on real Supabase users.
     // no initial friend requests
     const friendRequests: FriendRequest[] = [];
     friendRequests.forEach((r) => this.friendRequests.set(r.id, r));
@@ -973,6 +972,7 @@ export class MemStorage implements IStorage {
   async getCheckIns(): Promise<CheckInWithDetails[]> {
     // Deprecated: global feed is not supported by persisted storage.
     // Prefer calling `getCheckInsByUser(userId, token)` which enforces RLS.
+    // For public feed, use GET /api/check-ins endpoint instead.
     return [];
   }
 
@@ -984,9 +984,38 @@ export class MemStorage implements IStorage {
       // Attempt to fetch from Supabase using server-side anon/service key
       const { createServerSupabaseClient } = await import("./supabaseClient");
       const supabase = createServerSupabaseClient(supabaseToken);
+
+      // Verify token belongs to the same user id as provided by the route.
+      try {
+        let tokenForAuth = supabaseToken as string | undefined;
+        try {
+          tokenForAuth = tokenForAuth
+            ? String(tokenForAuth)
+                .replace(/^Bearer\s+/i, "")
+                .trim()
+            : tokenForAuth;
+        } catch (_err) {}
+        const { data: authData, error: authErr } = await (
+          supabase.auth as any
+        ).getUser({
+          access_token: tokenForAuth,
+        });
+        if (authErr || !authData || !authData.user || !authData.user.id) {
+          throw new Error("Invalid supabase token");
+        }
+        const tokenUserId = authData.user.id as string;
+        if (tokenUserId !== userId) {
+          throw new Error("Authenticated user mismatch");
+        }
+      } catch (e) {
+        // surface token verification issues as explicit errors
+        throw e;
+      }
       const { data, error } = await supabase
         .from("check_ins")
-        .select("id, user_id, place_id, drink_name, rating, notes, created_at")
+        .select(
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, created_at",
+        )
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -1001,8 +1030,12 @@ export class MemStorage implements IStorage {
             roasterId: null,
             rating: r.rating ?? 0,
             notes: r.notes ?? null,
-            photoUrl: null,
-            tastingNotes: null,
+            photoUrl: r.photo_url ?? null,
+            tastingNotes: Array.isArray(r.tasting_notes)
+              ? r.tasting_notes
+              : r.tasting_notes
+              ? this.tryParseJsonArray(r.tasting_notes)
+              : [],
             createdAt: r.created_at ? new Date(r.created_at) : new Date(),
           };
           return this.enrichCheckIn(checkIn as CheckIn);
@@ -1016,7 +1049,17 @@ export class MemStorage implements IStorage {
 
   private async enrichCheckIn(checkIn: CheckIn): Promise<CheckInWithDetails> {
     const user = await this.getUser(checkIn.userId);
-    const drink = await this.getDrink(checkIn.drinkId);
+    // drinkId now stores the display name (e.g., "Latte"), not the internal ID.
+    // Create a synthetic drink object with the name and a placeholder ID.
+    const drink = checkIn.drinkId
+      ? {
+          id: checkIn.drinkId,
+          name: checkIn.drinkId,
+          type: null as any,
+          style: null,
+          description: null,
+        }
+      : undefined;
     const cafe = checkIn.cafeId
       ? await this.getCafe(checkIn.cafeId)
       : undefined;
@@ -1039,20 +1082,58 @@ export class MemStorage implements IStorage {
       isLiked,
     };
   }
-  async getCheckIn(id: string): Promise<CheckIn | undefined> {
+
+  private tryParseJsonArray(v: any): any[] {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try {
+      const parsed = typeof v === "string" ? JSON.parse(v) : v;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  async getCheckIn(
+    id: string,
+    supabaseToken?: string,
+  ): Promise<CheckIn | undefined> {
     try {
       const { createServerSupabaseClient } = await import("./supabaseClient");
-      const supabase = createServerSupabaseClient();
+      const supabase = createServerSupabaseClient(supabaseToken);
+      try {
+        console.info("[storage] getCheckIn: id=", id, {
+          tokenPreview: supabaseToken
+            ? String(supabaseToken).slice(0, 8)
+            : null,
+        });
+      } catch (_e) {}
+
       const { data, error } = await supabase
         .from("check_ins")
         .select(
-          "id, user_id, place_id, drink_name, rating, notes, created_at, updated_at",
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, temperature, created_at",
         )
         .eq("id", id)
         .limit(1);
-      if (error) throw error;
+      if (error) {
+        try {
+          console.warn("[storage] getCheckIn: supabase error", { id, error });
+        } catch (_) {}
+        throw error;
+      }
       const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return undefined;
+      if (!row) {
+        try {
+          console.info("[storage] getCheckIn: no row", { id });
+        } catch (_) {}
+        return undefined;
+      }
+      try {
+        console.info("[storage] getCheckIn: row found", {
+          id,
+          user_id: row.user_id,
+        });
+      } catch (_) {}
       return {
         id: row.id,
         userId: row.user_id,
@@ -1061,10 +1142,15 @@ export class MemStorage implements IStorage {
         roasterId: null,
         rating: row.rating ?? 0,
         notes: row.notes ?? null,
-        photoUrl: null,
-        tastingNotes: null,
+        photoUrl: row.photo_url ?? null,
+        tastingNotes: Array.isArray(row.tasting_notes)
+          ? row.tasting_notes
+          : row.tasting_notes
+          ? this.tryParseJsonArray(row.tasting_notes)
+          : [],
+        temperature: row.temperature ?? null,
         createdAt: row.created_at ? new Date(row.created_at) : new Date(),
-        updatedAt: row.updated_at ? new Date(row.updated_at) : undefined,
+        updatedAt: undefined,
       } as CheckIn;
     } catch (err) {
       return undefined;
@@ -1073,8 +1159,9 @@ export class MemStorage implements IStorage {
 
   async getCheckInWithDetails(
     id: string,
+    supabaseToken?: string,
   ): Promise<CheckInWithDetails | undefined> {
-    const c = await this.getCheckIn(id);
+    const c = await this.getCheckIn(id, supabaseToken);
     if (!c) return undefined;
     return this.enrichCheckIn(c);
   }
@@ -1088,8 +1175,29 @@ export class MemStorage implements IStorage {
       const supabaseToken = (insertCheckIn as any)._supabaseToken as
         | string
         | undefined;
+      if (!supabaseToken) throw new Error("Missing supabase token");
       const { createServerSupabaseClient } = await import("./supabaseClient");
+      // Log token preview and which key is used for debugging in dev
+      // token preview logging removed to reduce dev noise
       const supabase = createServerSupabaseClient(supabaseToken);
+
+      // Log photo_url length for verification and reject inline images
+      const incomingPhoto = insertCheckIn.photoUrl ?? null;
+      const incomingPhotoLength = incomingPhoto
+        ? String(incomingPhoto).length
+        : 0;
+      try {
+        console.info("createCheckIn: photo_url.length", incomingPhotoLength);
+      } catch (_) {}
+
+      if (incomingPhoto && String(incomingPhoto).startsWith("data:image")) {
+        console.error(
+          "createCheckIn: rejected inline data URL for photo_url (data:image)",
+        );
+        throw new Error(
+          "Inline images are not allowed. Please upload the image to storage.",
+        );
+      }
 
       // Map application check-in to Supabase schema: use place_id (coffee_places.id)
       const payload: any = {
@@ -1098,13 +1206,30 @@ export class MemStorage implements IStorage {
         drink_name: insertCheckIn.drinkId,
         rating: insertCheckIn.rating,
         notes: insertCheckIn.notes ?? null,
+        photo_url: insertCheckIn.photoUrl ?? null,
+        tasting_notes: insertCheckIn.tastingNotes ?? null,
+        temperature: (insertCheckIn as any).temperature ?? null,
       };
+      try {
+        console.info("createCheckIn: Supabase payload before .insert():", {
+          temperature: payload.temperature,
+          drink_name: payload.drink_name,
+          rating: payload.rating,
+        });
+      } catch (_) {}
 
       const { data, error } = await supabase
         .from("check_ins")
         .insert(payload)
-        .select("id, user_id, place_id, drink_name, rating, notes, created_at");
-      if (error) throw error;
+        .select(
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, temperature, created_at",
+        );
+      if (error) {
+        try {
+          console.error("createCheckIn: supabase error", error);
+        } catch (_) {}
+        throw error;
+      }
       const row = Array.isArray(data) ? data[0] : data;
       const id = row?.id ?? randomUUID();
       const checkIn: CheckIn = {
@@ -1115,8 +1240,10 @@ export class MemStorage implements IStorage {
         roasterId: null,
         rating: row?.rating ?? insertCheckIn.rating,
         notes: row?.notes ?? insertCheckIn.notes ?? null,
-        photoUrl: insertCheckIn.photoUrl ?? null,
-        tastingNotes: insertCheckIn.tastingNotes ?? null,
+        photoUrl: row?.photo_url ?? insertCheckIn.photoUrl ?? null,
+        tastingNotes: row?.tasting_notes ?? insertCheckIn.tastingNotes ?? null,
+        temperature:
+          row?.temperature ?? (insertCheckIn as any).temperature ?? null,
         createdAt: row?.created_at ? new Date(row.created_at) : new Date(),
       };
       // push activity for new check-in (non-blocking)
@@ -1164,25 +1291,95 @@ export class MemStorage implements IStorage {
     id: string,
     update: Partial<InsertCheckIn>,
   ): Promise<CheckIn | undefined> {
-    const existing = await this.getCheckIn(id);
-    if (!existing) return undefined;
     try {
       const supabaseToken = (update as any)._supabaseToken as
         | string
         | undefined;
+      if (!supabaseToken) throw new Error("Missing supabase token");
+      const existing = await this.getCheckIn(id, supabaseToken);
+      if (!existing) return undefined;
       const { createServerSupabaseClient } = await import("./supabaseClient");
       const supabase = createServerSupabaseClient(supabaseToken);
+
+      // Verify token belongs to the same user as the existing check-in
+      // The token has already been validated in routes.ts, but we verify
+      // the user match here for safety using the same fallback approach
+      try {
+        let tokenForAuth = supabaseToken as string | undefined;
+        try {
+          tokenForAuth = tokenForAuth
+            ? String(tokenForAuth)
+                .replace(/^Bearer\s+/i, "")
+                .trim()
+            : tokenForAuth;
+        } catch (_err) {}
+
+        let tokenUserId: string | null = null;
+        const { data: authData, error: authErr } = await (
+          supabase.auth as any
+        ).getUser({
+          access_token: tokenForAuth,
+        });
+        if (!authErr && authData && authData.user && authData.user.id) {
+          tokenUserId = authData.user.id;
+        } else if (process.env.SUPABASE_URL && tokenForAuth) {
+          // Fallback to REST endpoint if auth-js fails
+          try {
+            const url = `${process.env.SUPABASE_URL.replace(
+              /\/+$/,
+              "",
+            )}/auth/v1/user`;
+            const resp = await fetch(url, {
+              headers: {
+                Authorization: `Bearer ${tokenForAuth}`,
+                apikey:
+                  process.env.SUPABASE_ANON_KEY ||
+                  process.env.SUPABASE_SERVICE_KEY ||
+                  "",
+                "Content-Type": "application/json",
+              },
+            });
+            if (resp.ok) {
+              const body = await resp.json();
+              tokenUserId = body.id ?? body.user?.id ?? null;
+            }
+          } catch (_restErr) {
+            // REST endpoint also failed
+          }
+        }
+
+        if (!tokenUserId) {
+          throw new Error("Invalid supabase token");
+        }
+        if (tokenUserId !== existing.userId) {
+          throw new Error("Authenticated user mismatch");
+        }
+      } catch (e) {
+        throw e;
+      }
       const payload: any = {
         drink_name: update.drinkId ?? existing.drinkId,
         place_id: update.cafeId ?? existing.cafeId,
         rating: update.rating ?? existing.rating,
         notes: update.notes ?? existing.notes,
+        photo_url: update.photoUrl ?? existing.photoUrl ?? null,
+        tasting_notes: update.tastingNotes ?? existing.tastingNotes ?? null,
+        temperature: (update as any).temperature ?? null,
       };
+      try {
+        console.info("updateCheckIn: Supabase payload before .update():", {
+          temperature: payload.temperature,
+          drink_name: payload.drink_name,
+          rating: payload.rating,
+        });
+      } catch (_) {}
       const { data, error } = await supabase
         .from("check_ins")
         .update(payload)
         .eq("id", id)
-        .select("id, user_id, place_id, drink_name, rating, notes, created_at");
+        .select(
+          "id, user_id, place_id, drink_name, rating, notes, photo_url, tasting_notes, temperature, created_at",
+        );
       if (error) throw error;
       const row = Array.isArray(data) ? data[0] : data;
       const updated: CheckIn = {
@@ -1193,8 +1390,14 @@ export class MemStorage implements IStorage {
         roasterId: null,
         rating: row?.rating ?? update.rating ?? existing.rating,
         notes: row?.notes ?? update.notes ?? existing.notes,
-        photoUrl: update.photoUrl ?? existing.photoUrl ?? null,
-        tastingNotes: update.tastingNotes ?? existing.tastingNotes ?? null,
+        photoUrl:
+          row?.photo_url ?? update.photoUrl ?? existing.photoUrl ?? null,
+        tastingNotes:
+          row?.tasting_notes ??
+          update.tastingNotes ??
+          existing.tastingNotes ??
+          null,
+        temperature: row?.temperature ?? (update as any).temperature ?? null,
         createdAt: row?.created_at
           ? new Date(row.created_at)
           : existing.createdAt,

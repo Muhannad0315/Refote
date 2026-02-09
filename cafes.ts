@@ -7,22 +7,31 @@ export interface Cafe {
   raw?: any;
   rating?: number | null;
   reviews?: number | null;
+  country?: string | null; // ISO-2 country code (e.g., SA, UK, US)
 }
 
 /**
  * Server-side helper to query Places SearchText for cafes near a point.
  * Caller must provide `apiKey` (keep keys server-side).
+ *
+ * @param allowedCountries - Optional array of ISO-2 country codes to filter by (e.g., ["SA", "UK"])
+ *                           If empty or not provided, all countries are accepted (global mode)
+ * @param requestId - Optional request ID for logging
  */
 import {
   SEARCH_RADIUS_METERS,
   SEARCH_RADIUS_SOURCE,
 } from "./server/searchConstants";
+import { detectCountryFromPlace } from "./server/discoverConfig";
 
 export async function getCafesAtLocation(
   apiKey: string,
   lat: number,
   lng: number,
+  radiusMeters: number,
   language = "en",
+  allowedCountries: string[] = [],
+  requestId = "unknown",
 ): Promise<Cafe[]> {
   if (!apiKey) {
     throw new Error("MissingApiKey");
@@ -30,7 +39,7 @@ export async function getCafesAtLocation(
   // Use the classic Maps Places Nearby Search endpoint which returns a stable
   // JSON schema (works reliably with an API key). This avoids the newer
   // `places:searchText` payload shape errors we've seen.
-  const radius = SEARCH_RADIUS_METERS;
+  const radius = radiusMeters;
   const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&type=cafe&language=${encodeURIComponent(
     language,
   )}&key=${encodeURIComponent(apiKey)}`;
@@ -79,6 +88,12 @@ export async function getCafesAtLocation(
   // entire Discover flow. Only REQUEST_DENIED is a hard error from Google.
   try {
     const status = data?.status;
+    if (status === "ZERO_RESULTS") {
+      console.log(
+        `[places][${requestId}] Google ZERO_RESULTS at (${lat}, ${lng}) radius=${radius}m — returning empty`,
+      );
+      return [];
+    }
     if (status === "UNKNOWN_ERROR") {
       console.warn(
         "getCafesAtLocation: Google Nearby Search UNKNOWN_ERROR — returning empty results",
@@ -95,6 +110,8 @@ export async function getCafesAtLocation(
   }
   const places = data.results || [];
 
+  // (removed TRACE logs to reduce noise)
+
   // Map initial results
   const mapped = places.map((p: any) => ({
     placeId: p.place_id ?? null,
@@ -107,6 +124,7 @@ export async function getCafesAtLocation(
     rating: typeof p.rating === "number" ? p.rating : null,
     reviews:
       typeof p.user_ratings_total === "number" ? p.user_ratings_total : null,
+    country: detectCountryFromPlace(p), // Detect country from place data
   }));
 
   // If the client requested Arabic (or other localized language) and some
@@ -119,29 +137,37 @@ export async function getCafesAtLocation(
     // Keep the Nearby Search `mapped` results unchanged.
   }
 
-  // Strictly filter results to Saudi Arabia only. Some Places results include
-  // `vicinity` or `plus_code.compound_code` containing the country name;
-  // enforce that here so the app only works inside Saudi Arabia.
-  const saFiltered = mapped.filter((m: any) => {
-    const raw = m.raw || {};
-    const vicinity = (raw.vicinity || raw.formatted_address || "").toString();
-    const plus = raw.plus_code
-      ? (
-          raw.plus_code.compound_code ||
-          raw.plus_code.global_code ||
-          ""
-        ).toString()
-      : "";
-    const combined = `${vicinity} ${plus}`;
-    const englishMatch = combined.toLowerCase().includes("saudi arabia");
-    const arabicMatch = combined.includes("السعودية");
-    return englishMatch || arabicMatch;
-  });
+  // Apply configurable country filtering
+  // If allowedCountries is empty, accept all countries (global mode)
+  const isGlobalMode = allowedCountries.length === 0;
 
-  if (saFiltered.length === 0) {
-    // Signal to caller that the location is outside Saudi Arabia
-    throw new Error("Service only available in Saudi Arabia");
+  const countryFiltered = isGlobalMode
+    ? mapped
+    : mapped.filter((cafe: Cafe) => {
+        if (!cafe.country) {
+          // Unknown country — log and reject in restricted mode
+          console.log(
+            `[places][${requestId}] placeId=${cafe.placeId} country=UNKNOWN accepted=false (no country detected)`,
+          );
+          return false;
+        }
+
+        const isAllowed = allowedCountries.includes(cafe.country);
+        console.log(
+          `[places][${requestId}] placeId=${cafe.placeId} country=${cafe.country} accepted=${isAllowed}`,
+        );
+        return isAllowed;
+      });
+
+  // Log filtering results for observability
+  if (!isGlobalMode && countryFiltered.length < mapped.length) {
+    const filtered = mapped.length - countryFiltered.length;
+    console.log(
+      `[places][${requestId}] placesFilteredOutByCountry=${filtered} (${mapped.length} → ${countryFiltered.length})`,
+    );
   }
 
-  return saFiltered;
+  // In restricted mode, return empty list if no places match
+  // DO NOT throw — caller will handle empty results gracefully
+  return countryFiltered;
 }

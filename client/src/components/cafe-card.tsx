@@ -2,9 +2,13 @@ import { MapPin, Star, Coffee, Navigation } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 import type { Cafe, CafeWithDistance } from "@shared/schema";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useRequireAuthAndProfile } from "@/lib/useRequireAuthAndProfile";
 import type { Language } from "@/lib/i18n";
+import { LocalizedText } from "@/components/LocalizedText";
+import { formatDistance } from "@/utils/distance";
 
 interface CafeCardProps {
   cafe: Cafe | CafeWithDistance;
@@ -25,6 +29,9 @@ export function CafeCard({
   averageRating,
   totalCheckIns,
 }: CafeCardProps) {
+  const requireAuthAndProfile = useRequireAuthAndProfile();
+  const [, setLocation] = useLocation();
+  const { t } = useI18n();
   const name =
     displayName ||
     (language === "ar"
@@ -48,12 +55,8 @@ export function CafeCard({
     language === "ar" ? (cafe as any).cityAr : (cafe as any).cityEn;
   const rating = averageRating ?? (cafe as any).rating ?? null;
 
-  const formatDistance = (dist: number) => {
-    if (dist < 1) {
-      return `${Math.round(dist * 1000)} m`;
-    }
-    return `${dist.toFixed(1)} km`;
-  };
+  // Use server-provided distance (meters) when present. Do NOT recalculate
+  // distance on the client — the server is the source of truth.
 
   return (
     <Card
@@ -85,7 +88,7 @@ export function CafeCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <h3
-              className={`font-serif text-base font-medium truncate ${
+              className={`text-base font-medium truncate ${
                 language === "ar" ? "text-right" : ""
               }`}
               data-testid={`text-cafe-name-${(cafe as any).id}`}
@@ -94,7 +97,7 @@ export function CafeCard({
                 href={`/cafe/${(cafe as any).placeId || (cafe as any).id}`}
                 className="inline-block"
               >
-                {name}
+                <LocalizedText>{name}</LocalizedText>
               </Link>
             </h3>
 
@@ -116,7 +119,7 @@ export function CafeCard({
                   }`}
                   data-testid={`link-directions-${(cafe as any).id}`}
                 >
-                  {language === "ar" ? "عرض على الخريطة" : "View on Maps"}
+                  <LocalizedText>{t("cafe.viewOnMaps")}</LocalizedText>
                 </a>
               ) : (cafe as any).latitude && (cafe as any).longitude ? (
                 <a
@@ -128,11 +131,11 @@ export function CafeCard({
                   className="text-primary hover:underline truncate"
                   data-testid={`link-directions-${(cafe as any).id}`}
                 >
-                  {language === "ar" ? "الاتجاهات" : "Directions"}
+                  <LocalizedText>{t("cafe.directions")}</LocalizedText>
                 </a>
               ) : (
                 <span className="text-muted-foreground truncate">
-                  {cityName}
+                  <LocalizedText>{cityName}</LocalizedText>
                 </span>
               )}
             </div>
@@ -155,7 +158,7 @@ export function CafeCard({
                     </>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      {language === "ar" ? "بدون تقييمات" : "No ratings"}
+                      <LocalizedText>{t("cafe.noRatings")}</LocalizedText>
                     </span>
                   )}
                 </div>
@@ -163,7 +166,7 @@ export function CafeCard({
                 <span className="text-xs text-muted-foreground">·</span>
 
                 <span className="text-xs text-muted-foreground">
-                  {language === "ar" ? "مقدم من Google" : "Provided by Google"}
+                  <LocalizedText>{t("cafe.providedByGoogle")}</LocalizedText>
                 </span>
               </div>
             )}
@@ -174,26 +177,33 @@ export function CafeCard({
                   language === "ar" ? "text-right" : ""
                 }`}
               >
-                {cityName}
+                <LocalizedText>{cityName}</LocalizedText>
               </div>
             )}
           </div>
 
           <div className="flex items-center gap-2 mt-2">
-            {distance !== undefined && (
+            {(typeof distance === "number" && Number.isFinite(distance)) ||
+            (typeof (cafe as any).distance === "number" &&
+              Number.isFinite((cafe as any).distance)) ? (
               <Badge variant="secondary" className="text-xs">
                 <Navigation className="h-3 w-3 me-1" />
-                {formatDistance(distance)}
+                {formatDistance(
+                  (typeof distance === "number" && Number.isFinite(distance)
+                    ? distance
+                    : (cafe as any).distance) as number,
+                )}
               </Badge>
-            )}
+            ) : null}
             {(cafe as any).specialty && (
               <Badge variant="outline" className="text-xs">
-                {(cafe as any).specialty}
+                <LocalizedText>{(cafe as any).specialty}</LocalizedText>
               </Badge>
             )}
             {totalCheckIns !== undefined && totalCheckIns > 0 && (
               <span className="text-xs text-muted-foreground">
-                {totalCheckIns} {language === "ar" ? "تسجيل" : "check-ins"}
+                {totalCheckIns}{" "}
+                <LocalizedText>{t("cafe.checkIns")}</LocalizedText>
               </span>
             )}
           </div>
@@ -201,17 +211,23 @@ export function CafeCard({
       </div>
 
       <div className="px-3 pb-3">
-        <Link
-          href={`/check-in?cafeId=${(cafe as any).placeId || (cafe as any).id}`}
+        <Button
+          className="w-full"
+          size="sm"
+          data-testid={`button-checkin-cafe-${(cafe as any).id}`}
+          onClick={async () => {
+            const ok = await requireAuthAndProfile();
+            if (ok) {
+              // User is authenticated and profile is complete, redirect to check-in page
+              setLocation(
+                `/check-in?cafeId=${(cafe as any).placeId || (cafe as any).id}`,
+              );
+            }
+            // If not authenticated or profile incomplete, requireAuthAndProfile will handle redirect
+          }}
         >
-          <Button
-            className="w-full"
-            size="sm"
-            data-testid={`button-checkin-cafe-${(cafe as any).id}`}
-          >
-            {language === "ar" ? "سجّل هنا" : "Check In Here"}
-          </Button>
-        </Link>
+          <LocalizedText>{t("cafe.checkInHere")}</LocalizedText>
+        </Button>
       </div>
     </Card>
   );

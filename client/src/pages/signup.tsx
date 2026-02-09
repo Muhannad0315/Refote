@@ -1,19 +1,22 @@
 import AuthForm from "@/components/auth-form";
-import { LanguageToggle } from "@/components/language-toggle";
-import { ThemeToggle } from "@/components/theme-toggle";
+import TopHeader from "@/components/top-header";
 import { useAuth } from "@/lib/auth";
 import { useForm } from "react-hook-form";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { PhotoUpload } from "@/components/photo-upload";
+import { PhotoUpload } from "@/components/photo-upload.canonical";
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
+import { useI18n } from "@/lib/i18n";
+import { localizedClassForText } from "@/components/LocalizedText";
 import { validateUsername } from "@/lib/validators";
+import { LocalizedText } from "@/components/LocalizedText";
 
 export default function SignupPage() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const [, setLocation] = useLocation();
   // Call hooks unconditionally so hook order stays stable between renders.
   const { data: profile } = useQuery({
@@ -59,20 +62,16 @@ export default function SignupPage() {
       setUsernameValid(false);
       setUsernameAvailable(null);
       setUsernameChecking(false);
-      if (reason === "length")
-        setUsernameMessage("Username must be 3–20 characters");
+      if (reason === "length") setUsernameMessage(t("signup.username.length"));
       else if (reason === "reserved")
-        setUsernameMessage("This username is reserved");
-      else
-        setUsernameMessage(
-          "Only lowercase letters, numbers, . and _ allowed; cannot start or end with . or _",
-        );
+        setUsernameMessage(t("signup.username.reserved"));
+      else setUsernameMessage(t("signup.username.invalidChars"));
       return;
     }
 
     setUsernameValid(true);
     setUsernameChecking(true);
-    setUsernameMessage("Checking availability...");
+    setUsernameMessage(t("signup.username.checking"));
     setUsernameAvailable(null);
 
     const timer = setTimeout(async () => {
@@ -85,19 +84,19 @@ export default function SignupPage() {
         if (!isActive) return;
         if (data.available) {
           setUsernameAvailable(true);
-          setUsernameMessage("Username available ✅");
+          setUsernameMessage(t("signup.username.available"));
         } else {
           setUsernameAvailable(false);
           if (data.reason === "taken")
-            setUsernameMessage("Username already taken ❌");
+            setUsernameMessage(t("signup.username.taken"));
           else if (data.reason === "reserved")
-            setUsernameMessage("This username is reserved ❌");
-          else setUsernameMessage("Username not available ❌");
+            setUsernameMessage(t("signup.username.reserved"));
+          else setUsernameMessage(t("signup.username.notAvailable"));
         }
       } catch (e) {
         if (!isActive) return;
         setUsernameAvailable(false);
-        setUsernameMessage("Error checking username");
+        setUsernameMessage(t("signup.username.errorChecking"));
       } finally {
         if (isActive) setUsernameChecking(false);
       }
@@ -153,29 +152,17 @@ export default function SignupPage() {
   if (!user) {
     return (
       <div className="min-h-screen bg-background pb-20">
-        <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-          <div className="relative">
-            <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-              <a
-                href="/"
-                className="pointer-events-auto font-serif text-xl font-bold"
-              >
-                Cafnote
-              </a>
-            </div>
-            <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-              <div />
-              <div className="flex items-center gap-1">
-                <LanguageToggle />
-                <ThemeToggle />
-              </div>
-            </div>
-          </div>
-        </header>
+        <TopHeader titleKey="auth.signup.title" />
 
         <main className="max-w-2xl mx-auto p-4">
-          <h2 className="text-xl font-semibold mb-4">Create your account</h2>
-          <AuthForm initialMode="signup" allowCollapse={false} />
+          <h2 className="text-xl font-semibold mb-4">
+            <LocalizedText>{t("auth.signup.create")}</LocalizedText>
+          </h2>
+          <AuthForm
+            initialMode="signup"
+            allowCollapse={false}
+            hideModeSwitch={true}
+          />
         </main>
       </div>
     );
@@ -185,53 +172,52 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-        <div className="relative">
-          <div className="absolute inset-x-0 flex justify-center pointer-events-none">
-            <a
-              href="/"
-              className="pointer-events-auto font-serif text-xl font-bold"
-            >
-              Cafnote
-            </a>
-          </div>
-          <div className="flex items-center justify-between px-4 h-14 max-w-2xl mx-auto">
-            <div />
-            <div className="flex items-center gap-1">
-              <LanguageToggle />
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </header>
+      <TopHeader titleKey="signup.completeProfile" />
 
       <main className="max-w-2xl mx-auto p-4">
-        <h2 className="text-xl font-semibold mb-4">Complete your profile</h2>
+        <h2 className="text-xl font-semibold mb-4">
+          <LocalizedText>{t("signup.completeProfile")}</LocalizedText>
+        </h2>
 
         <div className="space-y-3">
           <div>
             <Input
               {...form.register("username", { required: true })}
-              placeholder="Username (required)"
+              placeholder={t("signup.usernamePlaceholder")}
+              className={localizedClassForText(t("signup.usernamePlaceholder"))}
             />
             <div className="text-xs mt-1 text-muted-foreground">
-              {usernameMessage || "e.g. brew.john or john_coffee"}
+              <LocalizedText>
+                {usernameMessage || t("profile.usernameExample")}
+              </LocalizedText>
             </div>
           </div>
 
-          <Input {...form.register("displayName")} placeholder="Display name" />
+          <Input
+            {...form.register("displayName")}
+            placeholder={t("signup.displayNamePlaceholder")}
+            className={localizedClassForText(
+              t("signup.displayNamePlaceholder"),
+            )}
+          />
 
           <div>
-            <div className="text-sm font-medium mb-2">Avatar</div>
+            <div className="text-sm font-medium mb-2">
+              <LocalizedText>{t("profile.avatarLabel")}</LocalizedText>
+            </div>
             <PhotoUpload
               value={form.getValues().avatarUrl}
               onChange={(v: string) => form.setValue("avatarUrl", v)}
-              title="Add avatar"
-              hint="Click to upload your avatar"
+              title={t("signup.avatar.add")}
+              hint={t("signup.avatar.hint")}
             />
           </div>
 
-          <Textarea {...form.register("bio")} placeholder="Bio" />
+          <Textarea
+            {...form.register("bio")}
+            placeholder={t("signup.bioPlaceholder")}
+            className={localizedClassForText(t("signup.bioPlaceholder"))}
+          />
 
           <div className="flex gap-2">
             <button
@@ -250,7 +236,11 @@ export default function SignupPage() {
               }}
               disabled={!usernameValid || usernameAvailable !== true}
             >
-              {usernameChecking ? "Checking..." : "Save"}
+              {usernameChecking ? (
+                <LocalizedText>{t("signup.checking")}</LocalizedText>
+              ) : (
+                <LocalizedText>{t("signup.save")}</LocalizedText>
+              )}
             </button>
           </div>
         </div>

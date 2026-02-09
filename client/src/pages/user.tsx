@@ -1,9 +1,12 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useI18n } from "@/lib/i18n";
+import TopHeader from "@/components/top-header";
+import BackButton from "@/components/back-button";
 import { UserProfileHeader } from "@/components/user-profile-header";
 import type { UserProfile } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { LocalizedText } from "@/components/LocalizedText";
 
 export default function UserPage() {
   const { t, isRTL } = useI18n();
@@ -51,8 +54,18 @@ export default function UserPage() {
     },
   });
 
-  if (isLoading) return <div className="min-h-screen p-4">Loading...</div>;
-  if (!profile) return <div className="min-h-screen p-4">User not found</div>;
+  if (isLoading)
+    return (
+      <div className="min-h-screen p-4">
+        <LocalizedText>{t("common.loading")}</LocalizedText>
+      </div>
+    );
+  if (!profile)
+    return (
+      <div className="min-h-screen p-4">
+        <LocalizedText>{t("error.userNotFound")}</LocalizedText>
+      </div>
+    );
 
   const isFollowing = relation?.isFollowing;
   const friendRequest = relation?.friendRequest;
@@ -62,11 +75,8 @@ export default function UserPage() {
       className="min-h-screen bg-background pb-20"
       dir={isRTL ? "rtl" : "ltr"}
     >
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border p-4">
-        <Link href="/" className="text-primary">
-          Back
-        </Link>
-      </header>
+      <TopHeader titleKey="nav.profile" />
+      <BackButton href="/" />
 
       <main className="max-w-2xl mx-auto p-4">
         <UserProfileHeader
@@ -80,7 +90,7 @@ export default function UserPage() {
           {friendRequest ? (
             <div className="mb-4">
               <div className="text-sm text-muted-foreground">
-                {t("activity.followedYou")}
+                <LocalizedText>{t("activity.followedYou")}</LocalizedText>
               </div>
             </div>
           ) : (
@@ -90,7 +100,7 @@ export default function UserPage() {
                 onClick={() => friendRequestMutation.mutate()}
                 data-testid="button-friend-request"
               >
-                {t("common.follow")}
+                <LocalizedText>{t("common.follow")}</LocalizedText>
               </button>
             </div>
           )}

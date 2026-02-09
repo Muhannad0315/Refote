@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Check, ChevronsUpDown, Coffee, Leaf, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import LocalizedText, {
+  localizedClassForText,
+} from "@/components/LocalizedText";
 import {
   Command,
   CommandEmpty,
@@ -19,19 +22,21 @@ import type { Drink } from "@shared/schema";
 
 interface DrinkSelectorProps {
   drinks: Drink[];
-  selectedDrink?: Drink;
-  onSelect: (drink: Drink) => void;
+  selectedDrinkName?: string; // Display name of the drink
+  onSelect: (drinkName: string, isCustom?: boolean) => void;
   onCreateNew?: (name: string, type: "coffee" | "tea") => void;
 }
 
 export function DrinkSelector({
   drinks,
-  selectedDrink,
+  selectedDrinkName,
   onSelect,
   onCreateNew,
 }: DrinkSelectorProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customDrinkName, setCustomDrinkName] = useState("");
 
   const { t, language } = useI18n();
 
@@ -58,6 +63,15 @@ export function DrinkSelector({
     filteredTea.length === 0 &&
     search.length > 0;
 
+  const handleCustomDrinkSubmit = () => {
+    if (customDrinkName.trim()) {
+      onSelect(customDrinkName.trim(), true);
+      setCustomDrinkName("");
+      setShowCustomInput(false);
+      setOpen(false);
+    }
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -68,20 +82,14 @@ export function DrinkSelector({
           className="w-full justify-between h-auto min-h-10 py-2"
           data-testid="button-drink-selector"
         >
-          {selectedDrink ? (
+          {selectedDrinkName ? (
             <div className="flex items-center gap-2">
-              {selectedDrink.type === "coffee" ? (
-                <Coffee className="h-4 w-4 text-primary" />
-              ) : (
-                <Leaf className="h-4 w-4 text-green-600" />
-              )}
-              <span>
-                {t(`drink.${selectedDrink.id}`) || selectedDrink.name}
-              </span>
+              <Coffee className="h-4 w-4 text-primary" />
+              <LocalizedText>{selectedDrinkName}</LocalizedText>
             </div>
           ) : (
             <span className="text-muted-foreground">
-              {t("drink.selectPlaceholder")}
+              <LocalizedText>{t("drink.selectPlaceholder")}</LocalizedText>
             </span>
           )}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -91,92 +99,173 @@ export function DrinkSelector({
         <Command>
           <CommandInput
             placeholder={t("drink.searchPlaceholder")}
+            className={localizedClassForText(t("drink.searchPlaceholder"))}
             value={search}
             onValueChange={setSearch}
             data-testid="input-drink-search"
           />
           <CommandList>
-            <CommandEmpty>
-              <div className="p-4 space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  {t("drink.noResults")}
-                </p>
-                {search && onCreateNew && (
+            {showCustomInput ? (
+              <CommandEmpty>
+                <div className="p-4 space-y-2">
+                  <input
+                    type="text"
+                    placeholder={
+                      language === "ar"
+                        ? "اسم المشروب المخصص"
+                        : "Custom drink name"
+                    }
+                    value={customDrinkName}
+                    onChange={(e) => setCustomDrinkName(e.target.value)}
+                    className={`w-full px-2 py-1 border rounded text-sm ${localizedClassForText(
+                      language === "ar"
+                        ? "اسم المشروب المخصص"
+                        : "Custom drink name",
+                    )}`}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleCustomDrinkSubmit();
+                      } else if (e.key === "Escape") {
+                        setShowCustomInput(false);
+                      }
+                    }}
+                    data-testid="input-custom-drink"
+                  />
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        onCreateNew(search, "coffee");
-                        setOpen(false);
-                        setSearch("");
-                      }}
-                      data-testid="button-create-coffee"
+                      onClick={handleCustomDrinkSubmit}
+                      className="flex-1"
+                      data-testid="button-confirm-custom"
                     >
-                      <Plus className="h-3 w-3 mr-1" />
-                      <Coffee className="h-3 w-3 mr-1" />
-                      {t("drink.addAsCoffee")}
+                      <LocalizedText>
+                        {language === "ar" ? "تأكيد" : "Confirm"}
+                      </LocalizedText>
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        onCreateNew(search, "tea");
-                        setOpen(false);
-                        setSearch("");
+                        setShowCustomInput(false);
+                        setCustomDrinkName("");
                       }}
-                      data-testid="button-create-tea"
+                      className="flex-1"
                     >
-                      <Plus className="h-3 w-3 mr-1" />
-                      <Leaf className="h-3 w-3 mr-1" />
-                      {t("drink.addAsTea")}
+                      <LocalizedText>
+                        {language === "ar" ? "إلغاء" : "Cancel"}
+                      </LocalizedText>
                     </Button>
                   </div>
+                </div>
+              </CommandEmpty>
+            ) : noResults ? (
+              <CommandEmpty>
+                <div className="p-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    <LocalizedText>{t("drink.noResults")}</LocalizedText>
+                  </p>
+                  {search && onCreateNew && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onCreateNew(search, "coffee");
+                          setOpen(false);
+                          setSearch("");
+                        }}
+                        data-testid="button-create-coffee"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        <Coffee className="h-3 w-3 mr-1" />
+                        <LocalizedText>{t("drink.addAsCoffee")}</LocalizedText>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onCreateNew(search, "tea");
+                          setOpen(false);
+                          setSearch("");
+                        }}
+                        data-testid="button-create-tea"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        <Leaf className="h-3 w-3 mr-1" />
+                        <LocalizedText>{t("drink.addAsTea")}</LocalizedText>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CommandEmpty>
+            ) : (
+              <>
+                {filteredCoffee.length > 0 && (
+                  <CommandGroup heading={language === "ar" ? "قهوة" : "Coffee"}>
+                    {filteredCoffee.map((drink) => {
+                      const displayName = t(`drink.${drink.id}`) || drink.name;
+                      return (
+                        <CommandItem
+                          key={drink.id}
+                          value={displayName}
+                          onSelect={() => {
+                            onSelect(displayName);
+                            setOpen(false);
+                          }}
+                          data-testid={`item-drink-${drink.id}`}
+                        >
+                          <Coffee className="h-4 w-4 mr-2 text-primary" />
+                          <LocalizedText>{displayName}</LocalizedText>
+                          {selectedDrinkName === displayName && (
+                            <Check className="ml-auto h-4 w-4" />
+                          )}
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
                 )}
-              </div>
-            </CommandEmpty>
 
-            {filteredCoffee.length > 0 && (
-              <CommandGroup heading={language === "ar" ? "قهوة" : "Coffee"}>
-                {filteredCoffee.map((drink) => (
-                  <CommandItem
-                    key={drink.id}
-                    value={drink.name}
-                    onSelect={() => {
-                      onSelect(drink);
-                      setOpen(false);
-                    }}
-                    data-testid={`item-drink-${drink.id}`}
-                  >
-                    <Coffee className="h-4 w-4 mr-2 text-primary" />
-                    <span>{t(`drink.${drink.id}`) || drink.name}</span>
-                    {selectedDrink?.id === drink.id && (
-                      <Check className="ml-auto h-4 w-4" />
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
+                {filteredTea.length > 0 && (
+                  <CommandGroup heading={language === "ar" ? "شاي" : "Tea"}>
+                    {filteredTea.map((drink) => {
+                      const displayName = t(`drink.${drink.id}`) || drink.name;
+                      return (
+                        <CommandItem
+                          key={drink.id}
+                          value={displayName}
+                          onSelect={() => {
+                            onSelect(displayName);
+                            setOpen(false);
+                          }}
+                          data-testid={`item-drink-${drink.id}`}
+                        >
+                          <Leaf className="h-4 w-4 mr-2 text-green-600" />
+                          <LocalizedText>{displayName}</LocalizedText>
+                          {selectedDrinkName === displayName && (
+                            <Check className="ml-auto h-4 w-4" />
+                          )}
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                )}
+              </>
             )}
 
-            {filteredTea.length > 0 && (
-              <CommandGroup heading={language === "ar" ? "شاي" : "Tea"}>
-                {filteredTea.map((drink) => (
-                  <CommandItem
-                    key={drink.id}
-                    value={drink.name}
-                    onSelect={() => {
-                      onSelect(drink);
-                      setOpen(false);
-                    }}
-                    data-testid={`item-drink-${drink.id}`}
-                  >
-                    <Leaf className="h-4 w-4 mr-2 text-green-600" />
-                    <span>{t(`drink.${drink.id}`) || drink.name}</span>
-                    {selectedDrink?.id === drink.id && (
-                      <Check className="ml-auto h-4 w-4" />
-                    )}
-                  </CommandItem>
-                ))}
+            {/* "Other" option - always visible unless in custom input mode */}
+            {!showCustomInput && (
+              <CommandGroup>
+                <CommandItem
+                  onSelect={() => setShowCustomInput(true)}
+                  className="cursor-pointer"
+                  data-testid="item-drink-other"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  <LocalizedText>
+                    {language === "ar" ? "مشروب آخر" : "Other"}
+                  </LocalizedText>
+                </CommandItem>
               </CommandGroup>
             )}
           </CommandList>

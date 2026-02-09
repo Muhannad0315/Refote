@@ -22,3 +22,5 @@ Notes:
 
 - This setup only initializes a client; it intentionally does not add features.
 - Do NOT commit `.env` or secret keys. Use `.env.example` for reference.
+
+- Bucket created
