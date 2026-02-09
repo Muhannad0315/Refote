@@ -249,12 +249,9 @@ export async function registerRoutes(
     }
   }
 
-  // DEBUG: email confirmation inspection (remove before production)
-  // Input: email string
-  // Logs only to the server console the auth user's id, email,
-  // email_confirmed_at and confirmed_at (if present). Do NOT expose
-  // this information to clients or include it in responses.
-  async function debugInspectEmailConfirmation(
+  // Lookup an existing auth user by email. Returns the user object if found,
+  // null otherwise. Used during signup to detect duplicate/unconfirmed accounts.
+  async function lookupAuthUserByEmail(
     email: string,
   ): Promise<any | null> {
     try {
@@ -262,7 +259,6 @@ export async function registerRoutes(
       const supabase = createServerSupabaseClient();
       const { data: users, error } = await supabase.auth.admin.listUsers();
       if (error) {
-        console.error("[auth-debug] failed to list users", error);
         return null;
       }
       const found = (users?.users || []).find(
@@ -270,26 +266,8 @@ export async function registerRoutes(
           String(u.email || "").toLowerCase() ===
           String(email || "").toLowerCase(),
       );
-      if (!found) {
-        console.log("[auth-debug] User not found for email:", email);
-        return null;
-      }
-      // Log only the requested fields with a clear prefix.
-      try {
-        console.log(
-          `[auth-debug] user.id=${found.id} user.email=${
-            found.email
-          } email_confirmed_at=${found.email_confirmed_at} confirmed_at=${
-            found.confirmed_at ?? ""
-          }`,
-        );
-      } catch (e) {
-        // Ensure debug logging never throws
-        console.log("[auth-debug] failed to stringify user fields", e);
-      }
-      return found;
+      return found || null;
     } catch (e) {
-      console.error("[auth-debug] inspection failed", e);
       return null;
     }
   }
@@ -2047,9 +2025,13 @@ export async function registerRoutes(
     }
   });
 
-  // Create a new cafe
+  // Create a new cafe (authenticated)
   app.post("/api/cafes", async (req, res) => {
     try {
+      const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || undefined;
+      if (!token) return res.status(401).json({ error: "Missing auth token" });
+      const userId = await getUserIdFromToken(token);
+      if (!userId) return res.status(401).json({ error: "Invalid auth token" });
       const validatedData = insertCafeSchema.parse(req.body);
       const cafe = await storage.createCafe(validatedData);
       res.status(201).json(cafe);
@@ -2070,9 +2052,13 @@ export async function registerRoutes(
     }
   });
 
-  // Create a new drink
+  // Create a new drink (authenticated)
   app.post("/api/drinks", async (req, res) => {
     try {
+      const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || undefined;
+      if (!token) return res.status(401).json({ error: "Missing auth token" });
+      const userId = await getUserIdFromToken(token);
+      if (!userId) return res.status(401).json({ error: "Invalid auth token" });
       const validatedData = insertDrinkSchema.parse(req.body);
       const drink = await storage.createDrink(validatedData);
       res.status(201).json(drink);
@@ -2279,7 +2265,7 @@ export async function registerRoutes(
       // and whether it is already confirmed. This uses the debug helper which
       // logs details server-side and also returns the found user object.
       try {
-        const existingUser = await debugInspectEmailConfirmation(email);
+        const existingUser = await lookupAuthUserByEmail(email);
         if (existingUser) {
           const isConfirmed = !!existingUser.email_confirmed_at;
           if (isConfirmed) {
@@ -2379,8 +2365,7 @@ export async function registerRoutes(
               );
 
               if (existingUser) {
-                // DEBUG: inspect confirmation status for this email
-                await debugInspectEmailConfirmation(email);
+                await lookupAuthUserByEmail(email);
                 const isConfirmed = !!existingUser.email_confirmed_at;
                 if (!isConfirmed) {
                   try {
@@ -2482,8 +2467,7 @@ export async function registerRoutes(
             );
 
             if (existingUser) {
-              // DEBUG: inspect confirmation status for this email
-              await debugInspectEmailConfirmation(email);
+              await lookupAuthUserByEmail(email);
               const isConfirmed = !!existingUser.email_confirmed_at;
 
               if (!isConfirmed) {
@@ -2553,8 +2537,7 @@ export async function registerRoutes(
       // Update the profile row (created by insert trigger or default) with
       // explicit acceptance flags. Use UPDATE instead of INSERT to avoid
       // triggering CHECK constraints during creation.
-      // DEBUG: inspect confirmation status after successful signup
-      await debugInspectEmailConfirmation(email);
+      await lookupAuthUserByEmail(email);
       const { error: updateErr } = await supabase
         .from("profiles")
         .update({
@@ -3612,7 +3595,14 @@ export async function registerRoutes(
   });
 
   // Customer feedback endpoint - sends an email to support
-  app.post("/api/feedback", async (req, res) => {
+  const feedbackLimiter = (await import("express-rate-limit")).default({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: "Too many feedback submissions. Please try again later." },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.post("/api/feedback", feedbackLimiter, async (req, res) => {
     try {
       const { name, email, message } = req.body || {};
 

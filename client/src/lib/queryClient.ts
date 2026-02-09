@@ -87,17 +87,7 @@ export async function apiRequest(
   } catch (_) {
     // ignore if supabase not configured
   }
-  try {
-    if (process.env.NODE_ENV !== "production") {
-      try {
-        const preview = headers["Authorization"]
-          ? String(headers["Authorization"]).slice(0, 32)
-          : "<none>";
-        // eslint-disable-next-line no-console
-        console.info("apiRequest: Authorization header preview", preview);
-      } catch (_) {}
-    }
-  } catch (_) {}
+
 
   const fullUrl =
     url.startsWith("http") || url.startsWith("/")
@@ -142,17 +132,7 @@ export const getQueryFn: <T>(options: {
     } catch (_) {
       // ignore
     }
-    try {
-      if (process.env.NODE_ENV !== "production") {
-        try {
-          const preview = headers["Authorization"]
-            ? String(headers["Authorization"]).slice(0, 32)
-            : "<none>";
-          // eslint-disable-next-line no-console
-          console.info("getQueryFn: Authorization header preview", preview);
-        } catch (_) {}
-      }
-    } catch (_) {}
+
     const raw = Array.isArray(queryKey) ? queryKey.join("/") : String(queryKey);
     const path =
       raw.startsWith("http") || raw.startsWith("/") ? raw : "/" + raw;
