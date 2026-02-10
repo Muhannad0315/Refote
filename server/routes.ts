@@ -252,11 +252,9 @@ export async function registerRoutes(
     const staticUrls = [
       { loc: `${baseUrl}/`, changefreq: "daily", lastmod: today },
       { loc: `${baseUrl}/discover`, changefreq: "daily", lastmod: today },
-      { loc: `${baseUrl}/login`, changefreq: "monthly", lastmod: today },
-      { loc: `${baseUrl}/signup`, changefreq: "monthly", lastmod: today },
       { loc: `${baseUrl}/privacy`, changefreq: "yearly", lastmod: today },
       { loc: `${baseUrl}/terms`, changefreq: "yearly", lastmod: today },
-      { loc: `${baseUrl}/feedback`, changefreq: "monthly", lastmod: today },
+      { loc: `${baseUrl}/feedback`, changefreq: "yearly", lastmod: today },
     ];
 
     const cafeUrls: Array<{

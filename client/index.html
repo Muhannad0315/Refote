@@ -4,7 +4,7 @@
     <script>
       (function () {
         var gaId = "%VITE_GA_MEASUREMENT_ID%";
-        if (!gaId || gaId === "%VITE_GA_MEASUREMENT_ID%") return;
+        if (!gaId || gaId.charAt(0) === "%" || gaId === "undefined") return;
 
         window.dataLayer = window.dataLayer || [];
         function gtag() {
@@ -26,7 +26,7 @@
     <script>
       (function () {
         var gscToken = "%VITE_GSC_VERIFICATION%";
-        if (!gscToken || gscToken === "%VITE_GSC_VERIFICATION%") return;
+        if (!gscToken || gscToken.charAt(0) === "%" || gscToken === "undefined") return;
         var meta = document.createElement("meta");
         meta.setAttribute("name", "google-site-verification");
         meta.setAttribute("content", gscToken);

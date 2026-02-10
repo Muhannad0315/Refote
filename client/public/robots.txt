@@ -1,8 +1,15 @@
 User-agent: *
 Allow: /
+Allow: /discover
+Allow: /cafe/
+Allow: /privacy
+Allow: /terms
+Allow: /feedback
+
 Disallow: /login
 Disallow: /signup
 Disallow: /profile
 Disallow: /settings
+Disallow: /api/
 
 Sitemap: https://www.refote.com/sitemap.xml

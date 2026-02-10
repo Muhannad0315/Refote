@@ -1,0 +1,185 @@
+TASK: Final SEO, Google Analytics (GA4), Google Search Console (GSC),
+Sitemap, Robots.txt, and Location Discovery verification for Refote
+(pre-crawling)
+
+You have full permission to READ, VERIFY, EDIT, and FIX frontend and
+static SEO-related files as needed.
+
+DO NOT modify:
+- Backend logic
+- APIs
+- Authentication
+- Database schema
+- Supabase logic
+- Business logic
+
+This task is SEO + crawl readiness + UX safety ONLY.
+
+------------------------------------------------------------
+CONTEXT
+------------------------------------------------------------
+
+- App name: Refote
+- Domain: https://www.refote.com
+- App type: Single Page Application (SPA)
+- Secrets are already configured in Replit Secrets:
+  - VITE_GA_MEASUREMENT_ID
+  - VITE_GSC_VERIFICATION
+
+These MUST NOT be hardcoded anywhere.
+
+------------------------------------------------------------
+PART A — GOOGLE ANALYTICS (GA4)
+------------------------------------------------------------
+
+1) Verify GA4 setup
+- Confirm gtag.js is injected ONCE globally
+- Confirm GA ID is read from:
+  import.meta.env.VITE_GA_MEASUREMENT_ID
+- Ensure NO hardcoded GA IDs exist
+- Script must load immediately after <head>
+
+2) SPA page view tracking
+- Verify page_view fires on route changes
+- Confirm correct page_path values for:
+  /               (home)
+  /discover
+  /cafe/:id
+  /check-in
+  /profile
+  /login
+  /signup
+- No duplicate events
+- No console logging related to GA
+
+------------------------------------------------------------
+PART B — GOOGLE SEARCH CONSOLE (GSC)
+------------------------------------------------------------
+
+1) Verify GSC meta tag
+- Ensure verification tag exists globally:
+  <meta name="google-site-verification" content="...">
+- Value MUST come from:
+  import.meta.env.VITE_GSC_VERIFICATION
+- Do NOT hardcode the token
+- Confirm it renders in production HTML
+
+------------------------------------------------------------
+PART C — SITEMAP.XML REVIEW & IMPROVEMENT
+------------------------------------------------------------
+
+Current sitemap issues to verify & fix:
+- URLs appear concatenated or malformed
+- Inconsistent date/frequency formatting
+- Possible non-indexable routes included
+
+REQUIRED SITEMAP RULES:
+
+1) Sitemap MUST INCLUDE ONLY:
+- /
+- /discover
+- /cafe/:id        (public cafe pages)
+- /privacy
+- /terms
+- /feedback
+
+2) Sitemap MUST EXCLUDE:
+- /login
+- /signup
+- /profile
+- /settings
+- /check-in
+- /api/*
+- Any auth-only or user-private routes
+
+3) Format requirements:
+- One <url> per entry
+- Clean <loc> URLs
+- Valid ISO 8601 <lastmod>
+- Reasonable <changefreq>:
+  - homepage → daily
+  - discover → daily
+  - cafe pages → weekly
+  - legal/feedback → yearly
+
+4) Sitemap must be accessible at:
+https://www.refote.com/sitemap.xml
+
+------------------------------------------------------------
+PART D — ROBOTS.TXT REVIEW & FIX
+------------------------------------------------------------
+
+Robots.txt MUST match EXACTLY this intent:
+
+User-agent: *
+Allow: /
+Allow: /discover
+Allow: /cafe/
+Allow: /privacy
+Allow: /terms
+Allow: /feedback
+
+Disallow: /login
+Disallow: /signup
+Disallow: /profile
+Disallow: /settings
+Disallow: /api/
+
+Sitemap: https://www.refote.com/sitemap.xml
+
+Verification requirements:
+- File accessible at https://www.refote.com/robots.txt
+- No conflicting rules
+- No accidental blocking of indexable pages
+
+------------------------------------------------------------
+PART E — LOCATION DISCOVERY UX SAFETY
+------------------------------------------------------------
+
+Verify location discovery behavior on Discover page:
+
+1) Enable Location banner
+- When location permission is NOT granted:
+  Show a clear banner message:
+  "Location access denied. Please allow location access to view nearby cafes."
+- Banner must be visible and readable
+- CTA should clearly guide user to enable location
+
+2) When permission IS granted:
+- Banner must disappear
+- Nearby cafes must load normally
+
+3) No infinite loops
+- No repeated permission requests
+- No console spam
+
+------------------------------------------------------------
+PART F — FINAL VERIFICATION CHECKLIST
+------------------------------------------------------------
+
+Before completing, confirm ALL of the following:
+
+✔ GA4 loads once
+✔ GA ID is env-based (not hardcoded)
+✔ Page views tracked correctly
+✔ GSC verification meta exists in final HTML
+✔ Sitemap is clean, valid, and indexable
+✔ Robots.txt rules match exactly
+✔ /api routes are disallowed
+✔ Location banner behaves correctly
+✔ No sensitive keys exposed to client
+✔ No SEO-related console errors
+✔ No routing or app behavior regressions
+
+------------------------------------------------------------
+DELIVERABLE
+------------------------------------------------------------
+
+1) Apply fixes ONLY if needed
+2) Provide a concise summary:
+   - What was verified
+   - What was fixed (if anything)
+   - Confirmation that Refote is ready for Google indexing
+
+Proceed carefully and do not over-engineer.
+This is the FINAL SEO + crawl readiness pass before Google submission.

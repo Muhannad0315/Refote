@@ -290,11 +290,7 @@ export default function Discover() {
         {/* Single location prompt: show only when user has NO coords, not using
             server dev override, and the user is signed in (not logged out).
             Text varies by permission state (denied vs required). */}
-        {(() => {
-          const { user } = useAuth();
-          const showBanner = !devOverrideActive && !userLocation && !!user;
-          if (!showBanner) return null;
-
+        {!devOverrideActive && !userLocation && !!user && (() => {
           const messageKey =
             locationStatus === "denied"
               ? "discover.locationDenied"
