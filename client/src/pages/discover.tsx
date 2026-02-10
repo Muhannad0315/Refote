@@ -9,6 +9,7 @@ import TopHeader from "@/components/top-header";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
+import { setSeoMeta } from "@/lib/seo";
 import { localizedClassForText } from "@/components/LocalizedText";
 import LocalizedText from "@/components/LocalizedText";
 import {
@@ -163,6 +164,32 @@ export default function Discover() {
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
+
+  const cityFromCafes = useMemo(() => {
+    if (!cafes || cafes.length === 0) return "";
+    for (const cafe of cafes) {
+      const cityName =
+        language === "ar"
+          ? (cafe as any).cityAr
+          : (cafe as any).cityEn || (cafe as any).city;
+      if (typeof cityName === "string" && cityName.trim()) {
+        return cityName.trim();
+      }
+    }
+    return "";
+  }, [cafes, language]);
+
+  useEffect(() => {
+    if (!cityFromCafes) return;
+    setSeoMeta({
+      title: t("seo.title.city").replace("{city}", cityFromCafes),
+      description: t("seo.description.city").replace("{city}", cityFromCafes),
+      keywords: `${t("seo.keywords.default")}, ${t("seo.keywords.city").replace(
+        "{city}",
+        cityFromCafes,
+      )}`,
+    });
+  }, [cityFromCafes, language, t]);
 
   // Check server dev override status so Discover can run when temp_location
   // is enabled on the server even if the browser has no geolocation.

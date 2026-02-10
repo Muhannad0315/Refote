@@ -220,7 +220,9 @@ export function CafeCard({
             if (ok) {
               // User is authenticated and profile is complete, redirect to check-in page
               setLocation(
-                `/check-in?cafeId=${(cafe as any).placeId || (cafe as any).id}`,
+                `/check-in?cafeId=${
+                  (cafe as any).placeId || (cafe as any).id
+                }&cafeName=${encodeURIComponent(name)}`,
               );
             }
             // If not authenticated or profile incomplete, requireAuthAndProfile will handle redirect

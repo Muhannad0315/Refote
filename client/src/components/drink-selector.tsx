@@ -117,7 +117,7 @@ export function DrinkSelector({
                     }
                     value={customDrinkName}
                     onChange={(e) => setCustomDrinkName(e.target.value)}
-                    className={`w-full px-2 py-1 border rounded text-sm ${localizedClassForText(
+                    className={`w-full px-2 py-1 border rounded text-sm text-black ${localizedClassForText(
                       language === "ar"
                         ? "اسم المشروب المخصص"
                         : "Custom drink name",

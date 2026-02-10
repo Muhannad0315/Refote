@@ -94,6 +94,15 @@ const translations = {
     // App
     "app.name": "Refote",
     "app.supportEmail": "support@refote.com",
+    "seo.title.default": "Refote – Discover Cafes, Coffee & Drinks Near You",
+    "seo.description.default":
+      "Discover cafes, coffee shops, and drinks near you with Refote. Check in, rate drinks, explore coffee tasting notes, and find your next favorite cafe.",
+    "seo.keywords.default":
+      "coffee, cafe, cafes near me, coffee near me, best cafes near me, best coffee near me, coffee shops, coffee drinks, latte, espresso, cappuccino, cold brew, coffee reviews, cafe discovery, drink check-in",
+    "seo.title.city": "Best Cafes in {city} – Refote",
+    "seo.description.city":
+      "Discover the best cafes and coffee shops in {city} with Refote. Check in, rate drinks, and explore tasting notes.",
+    "seo.keywords.city": "best cafes in {city}, coffee shops in {city}",
     // Validation
     "validation.selectDrink": "Please select a drink",
     "validation.rateDrink": "Please rate your drink",
@@ -722,6 +731,15 @@ const translations = {
     // Ensure app name is localized
     "app.name": "ريفوت",
     "app.supportEmail": "support@refote.com",
+    "seo.title.default": "ريفوت – اكتشف المقاهي والقهوة والمشروبات القريبة منك",
+    "seo.description.default":
+      "اكتشف المقاهي ومحلات القهوة والمشروبات القريبة منك مع ريفوت. سجّل تقييماتك، واستكشف ملاحظات التذوق، واعثر على مقهاك المفضل القادم.",
+    "seo.keywords.default":
+      "قهوة, مقهى, مقاهي قريبة, قهوة قريبة, أفضل المقاهي, أفضل القهوة, محلات قهوة, مشروبات قهوة, لاتيه, إسبريسو, كابتشينو, كولد برو, مراجعات القهوة, اكتشاف المقاهي, تسجيل المشروبات",
+    "seo.title.city": "أفضل المقاهي في {city} – Refote",
+    "seo.description.city":
+      "اكتشف أفضل المقاهي ومحلات القهوة في {city} مع Refote. سجّل تقييماتك واستكشف ملاحظات التذوق.",
+    "seo.keywords.city": "أفضل المقاهي في {city}, محلات القهوة في {city}",
     // Policies (Arabic)
     "nav.privacy": "سياسة الخصوصية",
     "nav.terms": "شروط الاستخدام",

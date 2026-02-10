@@ -41,6 +41,18 @@ export function TastingNotesInput({
 
   const { t } = useI18n();
 
+  // Helper to format tasting notes: "note.silky" or "silky" → "Silky"
+  const formatTastingNote = (note: string): string => {
+    // Strip "note." prefix if present
+    const key = note.startsWith("note.") ? note.substring(5) : note;
+    // Try i18n lookup first
+    const translated = t(`note.${key}`);
+    // If translation differs from key, it was found; otherwise capitalize
+    if (translated && translated !== `note.${key}`) return translated;
+    // Fallback: capitalize first letter
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  };
+
   const addNote = (note: string) => {
     if (notes.length >= maxNotes) return;
     if (notes.includes(note)) return;
@@ -72,7 +84,7 @@ export function TastingNotesInput({
               onClick={() => removeNote(note)}
               data-testid={`badge-note-selected-${note}`}
             >
-              {note}
+              <LocalizedText>{formatTastingNote(note)}</LocalizedText>
               <X className="h-3 w-3 ml-1" />
             </Badge>
           ))}
@@ -114,7 +126,7 @@ export function TastingNotesInput({
                 data-testid={`badge-note-available-${note}`}
               >
                 <Plus className="h-3 w-3 mr-1" />
-                <LocalizedText>{t(`note.${note}`) || note}</LocalizedText>
+                <LocalizedText>{formatTastingNote(note)}</LocalizedText>
               </Badge>
             ))}
           </div>

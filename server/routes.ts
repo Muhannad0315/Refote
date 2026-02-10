@@ -86,6 +86,22 @@ function isSupabaseUnreachable(error: any): boolean {
   );
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function formatLastMod(value?: string | Date | null): string | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString().split("T")[0];
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
@@ -229,6 +245,72 @@ export async function registerRoutes(
     }
   }
 
+  app.get("/sitemap.xml", async (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const today = formatLastMod(new Date());
+
+    const staticUrls = [
+      { loc: `${baseUrl}/`, changefreq: "daily", lastmod: today },
+      { loc: `${baseUrl}/discover`, changefreq: "daily", lastmod: today },
+      { loc: `${baseUrl}/login`, changefreq: "monthly", lastmod: today },
+      { loc: `${baseUrl}/signup`, changefreq: "monthly", lastmod: today },
+      { loc: `${baseUrl}/privacy`, changefreq: "yearly", lastmod: today },
+      { loc: `${baseUrl}/terms`, changefreq: "yearly", lastmod: today },
+      { loc: `${baseUrl}/feedback`, changefreq: "monthly", lastmod: today },
+    ];
+
+    const cafeUrls: Array<{
+      loc: string;
+      lastmod?: string;
+      changefreq?: string;
+    }> = [];
+
+    try {
+      const { createServerSupabaseClient } = await import("./supabaseClient");
+      const supabase = createServerSupabaseClient();
+      const { data, error } = await supabase
+        .from("coffee_places")
+        .select("id, google_place_id, created_at")
+        .limit(1000);
+      if (!error && Array.isArray(data)) {
+        for (const row of data) {
+          const slug = row.google_place_id || row.id;
+          if (!slug) continue;
+          cafeUrls.push({
+            loc: `${baseUrl}/cafe/${encodeURIComponent(slug)}`,
+            lastmod: formatLastMod(row.created_at),
+            changefreq: "weekly",
+          });
+        }
+      }
+    } catch (_) {
+      // Fail silently; sitemap will include static URLs only.
+    }
+
+    const urls = [...staticUrls, ...cafeUrls]
+      .map((entry) => {
+        const parts = [
+          "  <url>",
+          `    <loc>${escapeXml(entry.loc)}</loc>`,
+        ];
+        if (entry.lastmod) {
+          parts.push(`    <lastmod>${entry.lastmod}</lastmod>`);
+        }
+        if (entry.changefreq) {
+          parts.push(`    <changefreq>${entry.changefreq}</changefreq>`);
+        }
+        parts.push("  </url>");
+        return parts.join("\n");
+      })
+      .join("\n");
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+
+    res.setHeader("Content-Type", "application/xml");
+    res.status(200).send(xml);
+  });
+
   // Helper: format errors for client responses. In development include
   // structured details; in production return a safe default message.
   function formatErrorForResponse(error: any, defaultMsg: string) {
@@ -251,9 +333,7 @@ export async function registerRoutes(
 
   // Lookup an existing auth user by email. Returns the user object if found,
   // null otherwise. Used during signup to detect duplicate/unconfirmed accounts.
-  async function lookupAuthUserByEmail(
-    email: string,
-  ): Promise<any | null> {
+  async function lookupAuthUserByEmail(email: string): Promise<any | null> {
     try {
       const { createServerSupabaseClient } = await import("./supabaseClient");
       const supabase = createServerSupabaseClient();
@@ -708,18 +788,18 @@ export async function registerRoutes(
           tastingNotes: Array.isArray(r.tasting_notes)
             ? r.tasting_notes
             : r.tasting_notes
-            ? (() => {
-                try {
-                  const parsed =
-                    typeof r.tasting_notes === "string"
-                      ? JSON.parse(r.tasting_notes)
-                      : r.tasting_notes;
-                  return Array.isArray(parsed) ? parsed : [];
-                } catch {
-                  return [];
-                }
-              })()
-            : [],
+              ? (() => {
+                  try {
+                    const parsed =
+                      typeof r.tasting_notes === "string"
+                        ? JSON.parse(r.tasting_notes)
+                        : r.tasting_notes;
+                    return Array.isArray(parsed) ? parsed : [];
+                  } catch {
+                    return [];
+                  }
+                })()
+              : [],
           createdAt: r.created_at ? new Date(r.created_at) : new Date(),
           user,
           likesCount: 0,
@@ -921,13 +1001,13 @@ export async function registerRoutes(
                 const cityEn = r.city_en ?? null;
                 const cityAr = r.city_ar ?? null;
                 const displayName =
-                  lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
+                  lang === "ar" ? (nameAr ?? nameEn) : (nameEn ?? nameAr);
                 const displayAddress =
                   lang === "ar"
-                    ? addressAr ?? addressEn
-                    : addressEn ?? addressAr;
+                    ? (addressAr ?? addressEn)
+                    : (addressEn ?? addressAr);
                 const displayCity =
-                  lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
+                  lang === "ar" ? (cityAr ?? cityEn) : (cityEn ?? cityAr);
                 const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
                 return {
                   id: r.id ?? null,
@@ -1621,11 +1701,13 @@ export async function registerRoutes(
             const cityEn = r.city_en ?? null;
             const cityAr = r.city_ar ?? null;
             const displayName =
-              lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
+              lang === "ar" ? (nameAr ?? nameEn) : (nameEn ?? nameAr);
             const displayAddress =
-              lang === "ar" ? addressAr ?? addressEn : addressEn ?? addressAr;
+              lang === "ar"
+                ? (addressAr ?? addressEn)
+                : (addressEn ?? addressAr);
             const displayCity =
-              lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
+              lang === "ar" ? (cityAr ?? cityEn) : (cityEn ?? cityAr);
             const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
             return {
               id: r.id ?? null,
@@ -1718,11 +1800,7 @@ export async function registerRoutes(
               count: parseInt(row.check_in_count, 10),
             }));
 
-            try {
-              console.log(
-                `[cafe-detail] placeId=${cafe.id} topDrinksCount=${topDrinks.length}`,
-              );
-            } catch (_) {}
+            // removed noisy log to prevent repeated terminal spam
           }
         } catch (e) {
           console.error("Failed to compute top drinks:", e);
@@ -1750,11 +1828,11 @@ export async function registerRoutes(
         const rating =
           dbRow && typeof dbRow.rating === "number"
             ? dbRow.rating
-            : cafe.rating ?? null;
+            : (cafe.rating ?? null);
         const reviews =
           dbRow && typeof dbRow.reviews === "number"
             ? dbRow.reviews
-            : cafe.reviews ?? null;
+            : (cafe.reviews ?? null);
 
         return res.json({ ...cafe, rating, reviews, topDrinks });
       }
@@ -1842,11 +1920,7 @@ export async function registerRoutes(
                 count: parseInt(row.check_in_count, 10),
               }));
 
-              try {
-                console.log(
-                  `[cafe-detail] placeId=${id} topDrinksCount=${topDrinks.length}`,
-                );
-              } catch (_) {}
+              // removed noisy log to prevent repeated terminal spam
             }
           } catch (e) {
             console.error("Failed to compute top drinks:", e);
@@ -1869,24 +1943,24 @@ export async function registerRoutes(
                   dbRow.photo_reference,
                 )}&maxWidth=1000`
               : localByPlace && (localByPlace as any).photoReference
-              ? `/api/photo?photoRef=${encodeURIComponent(
-                  (localByPlace as any).photoReference,
-                )}&maxWidth=1000`
-              : (localByPlace && (localByPlace as any).imageUrl) ?? null;
+                ? `/api/photo?photoRef=${encodeURIComponent(
+                    (localByPlace as any).photoReference,
+                  )}&maxWidth=1000`
+                : ((localByPlace && (localByPlace as any).imageUrl) ?? null);
           const rating =
             typeof (dbRow && (dbRow as any).rating) === "number"
               ? (dbRow as any).rating
               : typeof (localByPlace && (localByPlace as any).rating) ===
-                "number"
-              ? (localByPlace as any).rating
-              : null;
+                  "number"
+                ? (localByPlace as any).rating
+                : null;
           const reviews =
             typeof (dbRow && (dbRow as any).reviews) === "number"
               ? (dbRow as any).reviews
               : typeof (localByPlace && (localByPlace as any).reviews) ===
-                "number"
-              ? (localByPlace as any).reviews
-              : null;
+                  "number"
+                ? (localByPlace as any).reviews
+                : null;
 
           return res.json({
             id: localByPlace?.placeId ?? id,
@@ -1960,11 +2034,7 @@ export async function registerRoutes(
                 count: parseInt(row.check_in_count, 10),
               }));
 
-              try {
-                console.log(
-                  `[cafe-detail] placeId=${id} topDrinksCount=${topDrinks.length}`,
-                );
-              } catch (_) {}
+              // removed noisy log to prevent repeated terminal spam
             }
           } catch (e) {
             console.error("Failed to compute top drinks:", e);
@@ -1988,23 +2058,23 @@ export async function registerRoutes(
                 dbRow.photo_reference,
               )}&maxWidth=1000`
             : localByPlace && (localByPlace as any).photoReference
-            ? `/api/photo?photoRef=${encodeURIComponent(
-                (localByPlace as any).photoReference,
-              )}&maxWidth=1000`
-            : (localByPlace && (localByPlace as any).imageUrl) ?? null;
+              ? `/api/photo?photoRef=${encodeURIComponent(
+                  (localByPlace as any).photoReference,
+                )}&maxWidth=1000`
+              : ((localByPlace && (localByPlace as any).imageUrl) ?? null);
         const rating =
           typeof (dbRow && dbRow.rating) === "number"
             ? dbRow.rating
             : typeof (localByPlace && (localByPlace as any).rating) === "number"
-            ? (localByPlace as any).rating
-            : null;
+              ? (localByPlace as any).rating
+              : null;
         const reviews =
           typeof (dbRow && dbRow.reviews) === "number"
             ? dbRow.reviews
             : typeof (localByPlace && (localByPlace as any).reviews) ===
-              "number"
-            ? (localByPlace as any).reviews
-            : null;
+                "number"
+              ? (localByPlace as any).reviews
+              : null;
 
         return res.json({
           id: localByPlace?.placeId ?? id,
@@ -2028,7 +2098,9 @@ export async function registerRoutes(
   // Create a new cafe (authenticated)
   app.post("/api/cafes", async (req, res) => {
     try {
-      const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || undefined;
+      const token =
+        (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
+        undefined;
       if (!token) return res.status(401).json({ error: "Missing auth token" });
       const userId = await getUserIdFromToken(token);
       if (!userId) return res.status(401).json({ error: "Invalid auth token" });
@@ -2055,7 +2127,9 @@ export async function registerRoutes(
   // Create a new drink (authenticated)
   app.post("/api/drinks", async (req, res) => {
     try {
-      const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || undefined;
+      const token =
+        (req.headers.authorization || "").replace(/^Bearer\s+/i, "") ||
+        undefined;
       if (!token) return res.status(401).json({ error: "Missing auth token" });
       const userId = await getUserIdFromToken(token);
       if (!userId) return res.status(401).json({ error: "Invalid auth token" });
@@ -3356,8 +3430,8 @@ export async function registerRoutes(
         const reviews = Array.isArray(p.reviews)
           ? p.reviews.length
           : typeof p.userRatingsTotal === "number"
-          ? p.userRatingsTotal
-          : null;
+            ? p.userRatingsTotal
+            : null;
 
         // Location: flexible access
         let latitude: number | null = null;
@@ -3598,7 +3672,9 @@ export async function registerRoutes(
   const feedbackLimiter = (await import("express-rate-limit")).default({
     windowMs: 15 * 60 * 1000,
     max: 5,
-    message: { error: "Too many feedback submissions. Please try again later." },
+    message: {
+      error: "Too many feedback submissions. Please try again later.",
+    },
     standardHeaders: true,
     legacyHeaders: false,
   });

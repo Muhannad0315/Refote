@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /signup
+Disallow: /profile
+Disallow: /settings
+
+Sitemap: https://www.refote.com/sitemap.xml

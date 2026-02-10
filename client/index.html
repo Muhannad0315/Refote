@@ -1,6 +1,38 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <script>
+      (function () {
+        var gaId = "%VITE_GA_MEASUREMENT_ID%";
+        if (!gaId || gaId === "%VITE_GA_MEASUREMENT_ID%") return;
+
+        window.dataLayer = window.dataLayer || [];
+        function gtag() {
+          window.dataLayer.push(arguments);
+        }
+        window.gtag = window.gtag || gtag;
+
+        gtag("js", new Date());
+        gtag("config", gaId, { send_page_view: false });
+
+        var script = document.createElement("script");
+        script.async = true;
+        script.src =
+          "https://www.googletagmanager.com/gtag/js?id=" +
+          encodeURIComponent(gaId);
+        document.head.appendChild(script);
+      })();
+    </script>
+    <script>
+      (function () {
+        var gscToken = "%VITE_GSC_VERIFICATION%";
+        if (!gscToken || gscToken === "%VITE_GSC_VERIFICATION%") return;
+        var meta = document.createElement("meta");
+        meta.setAttribute("name", "google-site-verification");
+        meta.setAttribute("content", gscToken);
+        document.head.appendChild(meta);
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta
       name="viewport"

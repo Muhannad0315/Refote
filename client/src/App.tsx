@@ -13,10 +13,12 @@ import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme-provider";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useI18n } from "@/lib/i18n";
 import { BottomNav } from "@/components/bottom-nav";
 import LegalFooter from "@/components/LegalFooter";
 import { LocalizedText } from "@/components/LocalizedText";
+import { setSeoMeta } from "@/lib/seo";
+import { trackPageView } from "@/lib/analytics";
 import NotFound from "@/pages/not-found";
 // Home intentionally disabled — root redirects to Discover
 import Discover from "@/pages/discover";
@@ -79,6 +81,32 @@ function SessionInvalidHandler() {
       setLocation("/login");
     });
   }, [setLocation, signOut]);
+
+  return null;
+}
+
+function AnalyticsTracker() {
+  const [location] = useLocation();
+
+  useEffect(() => {
+    const path = `${window.location.pathname}${window.location.search}`;
+    trackPageView(path);
+  }, [location]);
+
+  return null;
+}
+
+function SeoDefaults() {
+  const { t, language } = useI18n();
+  const [location] = useLocation();
+
+  useEffect(() => {
+    setSeoMeta({
+      title: t("seo.title.default"),
+      description: t("seo.description.default"),
+      keywords: t("seo.keywords.default"),
+    });
+  }, [language, location, t]);
 
   return null;
 }
@@ -174,6 +202,8 @@ function App() {
           <SupabaseUnreachableBoundary>
             <TooltipProvider>
               <Toaster />
+              <SeoDefaults />
+              <AnalyticsTracker />
               <SessionInvalidHandler />
               {/* Top-right Signup/Login opener temporarily disabled; re-enable when needed */}
               {/*

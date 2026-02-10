@@ -112,36 +112,81 @@ export default function CheckIn() {
   const _initialCafeId = _initialParams.get("cafeId");
   // start unlocked; we'll lock only if we successfully resolve the cafe
   const [lockLocation, setLockLocation] = useState<boolean>(false);
+  const isPrefilledCafe = Boolean(_initialCafeId);
 
   // If the user navigated from a cafe/roaster card it will include a query
   // parameter like `?cafeId=...` or `?roasterId=...`. Read those and
   // pre-select the appropriate location once the lists are loaded.
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const cafeId = params.get("cafeId");
-      const roasterId = params.get("roasterId");
+    (async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const cafeId = params.get("cafeId");
+        const roasterId = params.get("roasterId");
 
-      if (cafeId && cafes.length > 0) {
-        const found = cafes.find(
-          (c) =>
-            String(c.id) === String(cafeId) ||
-            String((c as any).placeId) === String(cafeId),
-        );
-        if (found) {
-          handleCafeSelect(found);
-          setLockLocation(true);
-          return;
-        } else {
-          // no matching cafe found — don't lock the selector
-          setLockLocation(false);
+        // If a cafeId is present, try fetching that cafe directly from the
+        // server by its Google Place ID. This avoids relying on `/api/cafes`
+        // which may require location params and can return an empty list.
+        if (cafeId) {
+          try {
+            const lang = language === "ar" ? "ar" : "en";
+            const res = await fetch(
+              `/api/cafes/${encodeURIComponent(cafeId)}?lang=${lang}`,
+            );
+            if (res.ok) {
+              const cafeObj = await res.json();
+              if (cafeObj) {
+                handleCafeSelect(cafeObj as any);
+                setLockLocation(true);
+                return;
+              }
+            } else {
+              // non-OK response — fall through to fallback logic
+            }
+          } catch (err) {
+            // fetch failed — fall through to fallback logic
+          }
         }
+
+        // Fallback: if we have a loaded cafes list, try to find matching cafe
+        if (cafeId && cafes.length > 0) {
+          const found = cafes.find(
+            (c) =>
+              String(c.id) === String(cafeId) ||
+              String((c as any).placeId) === String(cafeId),
+          );
+          if (found) {
+            handleCafeSelect(found);
+            setLockLocation(true);
+            return;
+          } else {
+            // no matching cafe found — don't lock the selector
+            setLockLocation(false);
+            // If a cafeName was provided in the URL, prefill a minimal cafe
+            // object so the location appears selected and locked even when
+            // the full cafes list isn't available or doesn't include it.
+            const cafeNameFromParams = params.get("cafeName");
+            if (cafeId && cafeNameFromParams) {
+              const minimalCafe: any = {
+                id: cafeId,
+                placeId: cafeId,
+                nameEn: cafeNameFromParams,
+                nameAr: cafeNameFromParams,
+                cityEn: "",
+                cityAr: "",
+              };
+              handleCafeSelect(minimalCafe as any);
+              setLockLocation(true);
+              return;
+            }
+          }
+        }
+        // roasters removed — ignore roasterId fallback
+      } catch (e) {
+        // ignore
       }
-      // roasters removed — ignore roasterId fallback
-    } catch (e) {
-      // ignore
-    }
-  }, [cafes]);
+    })();
+  }, [cafes, language]);
 
   const form = useForm<CheckInFormValues>({
     resolver: zodResolver(checkInFormSchema),
@@ -559,7 +604,7 @@ export default function CheckIn() {
                     <LocalizedText>{t("checkIn.selectLocation")}</LocalizedText>
                   </FormLabel>
                   <FormControl>
-                    {lockLocation && selectedCafe ? (
+                    {(isPrefilledCafe || lockLocation) && selectedCafe ? (
                       <div className="flex items-center gap-2 p-2 rounded border border-border">
                         <div className="flex items-center gap-2">
                           <span className="text-primary">

@@ -7,11 +7,6 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 interface LocationOverride {
   enabled: boolean;
@@ -19,7 +14,7 @@ interface LocationOverride {
   lng?: number;
 }
 
-const OVERRIDE_FILE = path.join(__dirname, "temp_location.json");
+const OVERRIDE_FILE = path.join(process.cwd(), "server", "temp_location.json");
 
 /**
  * Load location override from temp_location.json
@@ -77,7 +72,6 @@ export function applyLocationOverride(
     };
   }
 
-  // Only log when an override is ACTIVE
   try {
     console.log(
       `[devLocationOverride][${requestId}] ACTIVE: overriding (${

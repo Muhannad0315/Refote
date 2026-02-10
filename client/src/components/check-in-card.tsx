@@ -39,6 +39,18 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
   });
   const canEdit = profile?.id && profile.id === checkIn.user?.id;
 
+  // Helper to format tasting notes: "note.silky" or "silky" → "Silky"
+  const formatTastingNote = (note: string): string => {
+    // Strip "note." prefix if present
+    const key = note.startsWith("note.") ? note.substring(5) : note;
+    // Try i18n lookup first
+    const translated = t(`note.${key}`);
+    // If translation differs from key, it was found; otherwise capitalize
+    if (translated && translated !== `note.${key}`) return translated;
+    // Fallback: capitalize first letter
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  };
+
   const handleDelete = async () => {
     // legacy — replaced by in-app dialog. Kept for compatibility.
   };
@@ -113,14 +125,12 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
 
             <div className={`min-w-0 ${isRTL ? "text-right" : "text-left"}`}>
               <div className="flex items-center gap-2 flex-wrap">
-                <Link href={`/users/${checkIn.user.username}`}>
-                  <span
-                    className="font-semibold text-sm cursor-pointer hover:underline"
-                    data-testid={`text-username-${checkIn.id}`}
-                  >
-                    <LocalizedText>{checkIn.user.displayName}</LocalizedText>
-                  </span>
-                </Link>
+                <span
+                  className="font-semibold text-sm"
+                  data-testid={`text-username-${checkIn.id}`}
+                >
+                  <LocalizedText>{checkIn.user.displayName}</LocalizedText>
+                </span>
                 <span className="text-muted-foreground text-xs">
                   {checkIn.createdAt &&
                     formatDistanceToNow(new Date(checkIn.createdAt), {
@@ -205,7 +215,7 @@ export function CheckInCard({ checkIn }: CheckInCardProps) {
                 data-testid={`badge-tasting-${checkIn.id}-${index}`}
               >
                 <Coffee className={`h-3 w-3 ${isRTL ? "ml-1" : "mr-1"}`} />
-                <LocalizedText>{t(`note.${note}`) || note}</LocalizedText>
+                <LocalizedText>{formatTastingNote(note)}</LocalizedText>
               </Badge>
             ))}
           </div>
