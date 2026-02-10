@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <script>
@@ -21,16 +21,6 @@
           "https://www.googletagmanager.com/gtag/js?id=" +
           encodeURIComponent(gaId);
         document.head.appendChild(script);
-      })();
-    </script>
-    <script>
-      (function () {
-        var gscToken = "%VITE_GSC_VERIFICATION%";
-        if (!gscToken || gscToken.charAt(0) === "%" || gscToken === "undefined") return;
-        var meta = document.createElement("meta");
-        meta.setAttribute("name", "google-site-verification");
-        meta.setAttribute("content", gscToken);
-        document.head.appendChild(meta);
       })();
     </script>
     <meta charset="UTF-8" />
