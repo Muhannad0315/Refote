@@ -17,8 +17,8 @@ export interface DiscoverConfig {
  */
 export function loadDiscoverConfig(): DiscoverConfig {
   const mode = (process.env.DISCOVER_COUNTRY_MODE ||
-    "single") as DiscoverCountryMode;
-  const allowedCountriesEnv = process.env.DISCOVER_ALLOWED_COUNTRIES || "SA";
+    "global") as DiscoverCountryMode;
+  const allowedCountriesEnv = process.env.DISCOVER_ALLOWED_COUNTRIES || "";
 
   const allowedCountries = allowedCountriesEnv
     .split(",")
