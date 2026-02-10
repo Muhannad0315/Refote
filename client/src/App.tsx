@@ -20,7 +20,7 @@ import { LocalizedText } from "@/components/LocalizedText";
 import { setSeoMeta } from "@/lib/seo";
 import { trackPageView } from "@/lib/analytics";
 import NotFound from "@/pages/not-found";
-// Home intentionally disabled — root redirects to Discover
+import Home from "@/pages/home";
 import Discover from "@/pages/discover";
 import Privacy from "@/pages/privacy";
 import Terms from "@/pages/terms";
@@ -41,7 +41,7 @@ import UserFollowing from "@/pages/user-following";
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Discover} />
+      <Route path="/" component={Home} />
       <Route path="/discover" component={Discover} />
       <Route path="/cafe/:id" component={CafeDetail} />
       <Route path="/check-in" component={CheckIn} />

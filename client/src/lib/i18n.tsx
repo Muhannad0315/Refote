@@ -104,6 +104,21 @@ const translations = {
     "seo.description.city":
       "Discover the best cafes and coffee shops in {city} with Refote. Check in, rate drinks, and explore tasting notes.",
     "seo.keywords.city": "best cafes in {city}, coffee shops in {city}",
+
+    // Landing page
+    "home.hero.tagline": "Your next favorite cafe is waiting.",
+    "home.hero.description": "Discover cafes near you, explore coffee shops worldwide, check in your drinks, rate your favorite latte, espresso, cappuccino, or cold brew, and share tasting notes with fellow coffee lovers.",
+    "home.cta": "Discover Cafes Near You",
+    "home.features.discover.title": "Discover Cafes",
+    "home.features.discover.description": "Find the best cafes near you or explore coffee shops in cities around the world.",
+    "home.features.checkin.title": "Check In Drinks",
+    "home.features.checkin.description": "Log every coffee and tea you try. Keep track of your favorite drinks, from espresso to cold brew.",
+    "home.features.rate.title": "Rate & Review",
+    "home.features.rate.description": "Rate your drinks, add tasting notes, and share your coffee reviews with the community.",
+    "home.seo.title": "Refote – Discover Cafes, Coffee Shops & Drinks Near You",
+    "home.seo.description": "Refote helps you discover cafes near you, find the best coffee shops, check in drinks like latte, espresso, cappuccino, and cold brew, rate them, and share tasting notes.",
+    "home.seo.keywords": "coffee, cafe, cafes near me, best cafes near me, coffee shops, coffee drinks, latte, espresso, cappuccino, cold brew, discover cafes worldwide, coffee reviews, drink check-ins, tasting notes",
+
     // Validation
     "validation.selectDrink": "Please select a drink",
     "validation.rateDrink": "Please rate your drink",
@@ -742,6 +757,21 @@ const translations = {
     "seo.description.city":
       "اكتشف أفضل المقاهي ومحلات القهوة في {city} مع Refote. سجّل تقييماتك واستكشف ملاحظات التذوق.",
     "seo.keywords.city": "أفضل المقاهي في {city}, محلات القهوة في {city}",
+
+    // Landing page
+    "home.hero.tagline": "مقهاك المفضّل القادم بانتظارك.",
+    "home.hero.description": "اكتشف المقاهي القريبة منك، واستكشف محلات القهوة حول العالم، وسجّل مشروباتك، وقيّم اللاتيه والإسبريسو والكابتشينو والكولد برو المفضلة لديك، وشارك ملاحظات التذوق مع محبي القهوة.",
+    "home.cta": "اكتشف المقاهي القريبة منك",
+    "home.features.discover.title": "اكتشف المقاهي",
+    "home.features.discover.description": "اعثر على أفضل المقاهي القريبة منك أو استكشف محلات القهوة في مدن حول العالم.",
+    "home.features.checkin.title": "سجّل مشروباتك",
+    "home.features.checkin.description": "سجّل كل قهوة وشاي تجربه. تابع مشروباتك المفضلة من الإسبريسو إلى الكولد برو.",
+    "home.features.rate.title": "قيّم وراجع",
+    "home.features.rate.description": "قيّم مشروباتك، أضف ملاحظات التذوق، وشارك مراجعاتك مع المجتمع.",
+    "home.seo.title": "ريفوت – اكتشف المقاهي ومحلات القهوة والمشروبات القريبة منك",
+    "home.seo.description": "ريفوت يساعدك على اكتشاف المقاهي القريبة، والعثور على أفضل محلات القهوة، وتسجيل مشروباتك مثل اللاتيه والإسبريسو والكابتشينو والكولد برو، وتقييمها ومشاركة ملاحظات التذوق.",
+    "home.seo.keywords": "قهوة, مقهى, مقاهي قريبة, أفضل المقاهي, محلات قهوة, مشروبات قهوة, لاتيه, إسبريسو, كابتشينو, كولد برو, اكتشاف المقاهي, مراجعات القهوة, تسجيل المشروبات, ملاحظات التذوق",
+
     // Policies (Arabic)
     "nav.privacy": "سياسة الخصوصية",
     "nav.terms": "شروط الاستخدام",

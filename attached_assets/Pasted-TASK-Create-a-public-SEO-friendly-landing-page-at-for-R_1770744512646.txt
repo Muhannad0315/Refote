@@ -1,0 +1,160 @@
+TASK: Create a public SEO-friendly landing page at "/" for Refote
+(Replace redirect-only homepage with a real landing page)
+
+You have full permission to READ, EDIT, ADD, and REFACTOR frontend code
+to complete this task.
+
+IMPORTANT CONSTRAINTS
+---------------------
+- Do NOT modify backend logic
+- Do NOT modify APIs
+- Do NOT modify authentication flows
+- Do NOT modify database schema
+- Do NOT modify Supabase logic
+- Do NOT break routing or existing pages
+- Do NOT remove i18n or hardcode text
+- Styling, fonts, and layout MUST remain consistent with the app
+
+This is a ONE-TIME structural change to fix SEO + Google indexing.
+
+------------------------------------------------------------
+CONTEXT
+------------------------------------------------------------
+
+- App name: Refote
+- SPA (Single Page Application)
+- Current behavior:
+  "/" immediately redirects to "/discover"
+- This causes Google Search Console to flag "/" and "/discover"
+  as Soft 404 and not indexable.
+
+We are FIXING this by introducing a real landing page at "/".
+
+------------------------------------------------------------
+PRIMARY OBJECTIVE
+------------------------------------------------------------
+
+Create a PUBLIC landing page at route "/"
+that explains what Refote is, is SEO-friendly,
+and includes a clear CTA to go to "/discover".
+
+AFTER this change:
+- "/" MUST NOT auto-redirect to "/discover"
+- "/discover" remains unchanged and fully functional
+
+------------------------------------------------------------
+LANGUAGE & i18n REQUIREMENTS
+------------------------------------------------------------
+
+- The landing page MUST support BOTH languages:
+  - English
+  - Arabic
+- ALL text must come from the existing i18n system
+- NO hardcoded strings
+- Language switcher must work exactly as it does on other pages
+- RTL / LTR must be handled correctly
+- Use existing translation structure and keys
+
+------------------------------------------------------------
+DESIGN & UI REQUIREMENTS
+------------------------------------------------------------
+
+- The landing page MUST:
+  - Use the SAME header component (logo, nav, language toggle)
+  - Use the SAME footer (Privacy, Terms, Feedback)
+  - Use the SAME fonts (Arabic & English)
+  - Use the SAME color system and spacing
+  - Match dark/light mode behavior
+- This page should visually feel like part of the app,
+  not a marketing website bolted on.
+
+------------------------------------------------------------
+CONTENT REQUIREMENTS (SEO-FOCUSED)
+------------------------------------------------------------
+
+Landing page content (via i18n):
+
+1) Hero section
+- App name: Refote
+- Short description explaining:
+  - Discover cafes near you
+  - Find coffee shops worldwide
+  - Check in drinks
+  - Rate coffee & tasting notes
+
+2) SEO keyword coverage (naturally in content):
+- coffee
+- cafe
+- cafes near me
+- best cafes near me
+- coffee shops
+- coffee drinks
+- latte, espresso, cappuccino, cold brew
+- discover cafes worldwide
+- coffee reviews
+- drink check-ins
+
+3) Call to Action (CTA)
+- Primary button:
+  → "Discover Cafes Near You"
+  → Navigates to "/discover"
+- Button text MUST be localized (i18n)
+
+------------------------------------------------------------
+SEO & META BEHAVIOR
+------------------------------------------------------------
+
+- "/" MUST be indexable
+- "/" MUST return real content (not empty)
+- Ensure correct meta tags are applied:
+  - title
+  - description
+  - keywords
+  - OG tags
+  - Twitter tags
+- DO NOT duplicate meta logic already implemented
+- No redirects from "/" to "/discover"
+
+------------------------------------------------------------
+ROUTING RULES
+------------------------------------------------------------
+
+- "/" → NEW landing page (this task)
+- "/discover" → existing discover page
+- All other routes remain unchanged
+
+------------------------------------------------------------
+WHAT NOT TO DO
+------------------------------------------------------------
+
+- Do NOT add new dependencies
+- Do NOT remove "/discover"
+- Do NOT break SPA navigation
+- Do NOT hardcode SEO text
+- Do NOT introduce new layouts
+- Do NOT add analytics logic here
+
+------------------------------------------------------------
+ACCEPTANCE CRITERIA
+------------------------------------------------------------
+
+✔ "/" shows a real landing page
+✔ Page is bilingual (EN / AR) using i18n
+✔ Fonts and styles match the app exactly
+✔ CTA navigates to "/discover"
+✔ No automatic redirect from "/"
+✔ SEO keywords are present in visible content
+✔ Header & footer are reused
+✔ RTL/LTR works correctly
+✔ No backend or auth changes
+✔ App behavior elsewhere is unchanged
+
+------------------------------------------------------------
+DELIVERABLE
+------------------------------------------------------------
+
+1) Implement the landing page cleanly
+2) Remove any redirect-only behavior from "/"
+3) Confirm "/" is ready for Google indexing
+
+Proceed carefully. This is a FINAL SEO structural fix.
