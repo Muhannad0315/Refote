@@ -246,7 +246,24 @@ export async function registerRoutes(
   }
 
   app.get("/sitemap.xml", async (req, res) => {
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    // Derive base URL for sitemap entries. For the production domain
+    // enforce HTTPS and canonical `www.refote.com`. For other hosts
+    // (dev, staging) preserve the incoming protocol and host.
+    const rawHost = String(req.get("host") || "");
+    let hostForUrl = rawHost;
+    let protocolForUrl = req.protocol || "https";
+    try {
+      const hostLower = rawHost.toLowerCase();
+      if (
+        hostLower === "www.refote.com" ||
+        hostLower === "refote.com" ||
+        hostLower.endsWith(".refote.com")
+      ) {
+        hostForUrl = "www.refote.com";
+        protocolForUrl = "https";
+      }
+    } catch (_e) {}
+    const baseUrl = `${protocolForUrl}://${hostForUrl}`;
     const today = formatLastMod(new Date());
 
     const staticUrls = [
@@ -287,10 +304,7 @@ export async function registerRoutes(
 
     const urls = [...staticUrls, ...cafeUrls]
       .map((entry) => {
-        const parts = [
-          "  <url>",
-          `    <loc>${escapeXml(entry.loc)}</loc>`,
-        ];
+        const parts = ["  <url>", `    <loc>${escapeXml(entry.loc)}</loc>`];
         if (entry.lastmod) {
           parts.push(`    <lastmod>${entry.lastmod}</lastmod>`);
         }
@@ -302,7 +316,8 @@ export async function registerRoutes(
       })
       .join("\n");
 
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    const xml =
+      `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
 
     res.setHeader("Content-Type", "application/xml");
