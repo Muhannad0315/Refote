@@ -1,0 +1,122 @@
+TASK: Lock and standardize Location Access Banner behavior (Discover page)
+
+You have full permission to READ, EDIT, and FIX frontend UI logic related
+to location permission messaging.
+
+DO NOT modify:
+- Backend logic
+- APIs
+- Database schema
+- Google Places logic
+- Supabase logic
+- Auth logic
+
+This is a UI/UX + state-handling task ONLY.
+
+------------------------------------------------------------
+CONTEXT
+------------------------------------------------------------
+
+- App name: Refote
+- Page: Discover
+- Location permission is REQUIRED to show nearby cafes
+- Currently:
+  - When location permission is denied or not granted,
+    NO banner appears
+  - Previously, a banner existed above the cafe list
+  - We need this behavior LOCKED and consistent
+
+------------------------------------------------------------
+REQUIRED BEHAVIOR
+------------------------------------------------------------
+
+1) Banner must ALWAYS be visible on Discover page
+--------------------------------------------------
+- Banner appears:
+  - Below the header
+  - Above the cafe search / list
+- Banner must render regardless of permission state
+
+------------------------------------------------------------
+2) Permission states & messaging
+--------------------------------------------------
+
+There are TWO explicit states:
+
+A) Location permission NOT granted
+----------------------------------
+Conditions:
+- Permission denied
+- Permission not yet requested
+- Browser blocked location
+
+Banner behavior:
+- Background: light gray (works in dark & light mode)
+- Text color: RED
+- Message (exact intent, wording can vary slightly):
+  "Location access is required to view nearby cafes."
+- CTA button:
+  "Enable Location"
+- Clicking CTA:
+  - Triggers browser geolocation permission request
+  - Does NOT silently fail
+- No cafes should be fetched until permission is granted
+
+B) Location permission GRANTED
+------------------------------
+Conditions:
+- Geolocation permission accepted
+- Valid coordinates available
+
+Banner behavior:
+- Same banner container (no layout jump)
+- Background: light gray
+- Text color: GREEN
+- Message:
+  "Location access enabled. Showing nearby cafes."
+- CTA button may be:
+  - Hidden OR
+  - Disabled (agent choice, but must be consistent)
+
+------------------------------------------------------------
+3) UX constraints
+------------------------------------------------------------
+
+- Banner must NOT flicker on page load
+- Banner must update reactively when permission state changes
+- No duplicate banners
+- No console spam
+- No alerts, modals, or toasts
+- Banner should survive refresh and route navigation
+
+------------------------------------------------------------
+4) Technical constraints
+------------------------------------------------------------
+
+- Use existing location permission / geolocation logic
+- Do NOT introduce new dependencies
+- Do NOT reintroduce hard-coded country logic
+- Do NOT break Discover fetching logic
+- Keep styling consistent with current design system
+
+------------------------------------------------------------
+ACCEPTANCE CRITERIA
+------------------------------------------------------------
+
+✔ Banner is ALWAYS visible on Discover page
+✔ Red state shown when permission not granted
+✔ Green state shown when permission granted
+✔ User is clearly told location is required
+✔ Enable Location button works correctly
+✔ No regression in cafe discovery
+✔ No layout shifts or visual glitches
+
+------------------------------------------------------------
+DELIVERABLE
+------------------------------------------------------------
+
+1) Implement banner logic cleanly
+2) Confirm which component owns the permission state
+3) Briefly summarize what changed and why
+
+Proceed carefully — this is the FINAL lock-in for location UX.
