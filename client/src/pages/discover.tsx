@@ -285,34 +285,40 @@ export default function Discover() {
       />
 
       <main className="max-w-2xl mx-auto px-4 py-4">
-        {/* Removed duplicate denied banner — keep only the enable-location prompt below */}
-
-        {/* Single location prompt: show only when user has NO coords, not using
-            server dev override, and the user is signed in (not logged out).
-            Text varies by permission state (denied vs required). */}
-        {!devOverrideActive && !userLocation && !!user && (() => {
-          const messageKey =
-            locationStatus === "denied"
-              ? "discover.locationDenied"
-              : locationStatus === "error"
-              ? "discover.locationError"
-              : "discover.locationRequired";
+        {/* Location access banner — always visible, two states:
+            Red: location not granted (denied / error / idle / requesting)
+            Green: location granted with valid coordinates */}
+        {(() => {
+          const granted = locationStatus === "granted" && !!userLocation;
+          const messageKey = granted
+            ? "discover.locationEnabled"
+            : "discover.locationRequired";
 
           return (
-            <div className="mb-4 p-3 rounded-md bg-muted text-muted-foreground text-sm flex items-center gap-2">
+            <div
+              className={`mb-4 p-3 rounded-md bg-muted text-sm flex items-center gap-2 ${
+                granted
+                  ? "text-green-700 dark:text-green-400"
+                  : "text-red-600 dark:text-red-400"
+              }`}
+              data-testid="banner-location-status"
+            >
               <MapPin className="h-4 w-4 flex-shrink-0" />
               <span>
                 <LocalizedText>{t(messageKey)}</LocalizedText>
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={requestLocation}
-                className="ms-auto"
-                data-testid="button-request-location"
-              >
-                <LocalizedText>{t("discover.enableLocation")}</LocalizedText>
-              </Button>
+              {!granted && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={requestLocation}
+                  disabled={locationStatus === "requesting"}
+                  className="ms-auto"
+                  data-testid="button-request-location"
+                >
+                  <LocalizedText>{t("discover.enableLocation")}</LocalizedText>
+                </Button>
+              )}
             </div>
           );
         })()}
