@@ -70,10 +70,7 @@ app.use((req, res, next) => {
   // Enforce presence of GOOGLE_API_KEY at startup — this app requires live Places data.
   const serverApiKey = process.env.GOOGLE_API_KEY;
   if (!serverApiKey) {
-    console.error(
-      "Refote: Startup failed — GOOGLE_API_KEY missing or Places API unavailable",
-    );
-    process.exit(1);
+    console.warn("GOOGLE_API_KEY missing — Google Places features may not work.");
   } else {
     // console.log(
     //   "Refote: Using Google Places API as the ONLY cafe data source",
