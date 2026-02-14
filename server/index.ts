@@ -82,6 +82,37 @@ app.use((req, res, next) => {
   // Note: Do not load `server/test-location` at startup — dev location overrides
   // are evaluated per-request to avoid caching and silent fallbacks.
 
+  // Production-only global redirect to canonical HTTPS + WWW host.
+  // Skip for internal/localhost/Railway hosts to avoid breaking health checks.
+  if (process.env.NODE_ENV === "production") {
+    app.use((req, res, next) => {
+      const host = String(req.headers.host || "").toLowerCase();
+      const proto = String(
+        req.headers["x-forwarded-proto"] || "",
+      ).toLowerCase();
+
+      // Do not redirect internal or local hosts (Railway, localhost, loopback)
+      if (
+        host === "localhost" ||
+        host.startsWith("127.") ||
+        host.endsWith(".railway.app") ||
+        host.endsWith(".railway.sh")
+      ) {
+        return next();
+      }
+
+      // If already on the canonical host with https, do nothing
+      if (proto === "https" && host === "www.refote.com") return next();
+
+      // Redirect when the request is plain http, or host is the non-www domain
+      const shouldRedirect = proto === "http" || host === "refote.com";
+      if (!shouldRedirect) return next();
+
+      const destination = `https://www.refote.com${req.originalUrl || req.url}`;
+      return res.redirect(301, destination);
+    });
+  }
+
   // Ensure `photo_reference` column exists in `coffee_places` (helpful for first-run)
   try {
     const { createServerSupabaseClient } = await import("./supabaseClient");
