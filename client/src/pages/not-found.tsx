@@ -11,30 +11,33 @@ export default function NotFound() {
 
   return (
     <div
-      className="min-h-screen w-full flex flex-col items-center justify-center bg-background"
+      className="min-h-screen bg-background pb-20"
       dir={isRTL ? "rtl" : "ltr"}
     >
-      <TopHeader titleKey="notfound.title" />
-      <Card className="w-full max-w-md mx-4">
-        <CardContent className="pt-6">
-          <div className="flex mb-4 gap-2 items-center">
-            <AlertCircle className="h-8 w-8 text-destructive" />
-            <h1 className="text-2xl font-bold">
-              <LocalizedText>{t("notfound.title")}</LocalizedText>
-            </h1>
-          </div>
+      <TopHeader />
 
-          <p className="mt-4 text-sm text-muted-foreground">
-            <LocalizedText>{t("notfound.description")}</LocalizedText>
-          </p>
+      <main className="max-w-2xl mx-auto px-4 py-8 flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-6">
+            <div className="flex mb-4 gap-2 items-center">
+              <AlertCircle className="h-8 w-8 text-destructive" />
+              <h1 className="text-2xl font-bold">
+                <LocalizedText>{t("notfound.title")}</LocalizedText>
+              </h1>
+            </div>
 
-          <Link href="/">
-            <Button className="mt-4 w-full" data-testid="button-go-home">
-              <LocalizedText>{t("notfound.goHome")}</LocalizedText>
-            </Button>
-          </Link>
-        </CardContent>
-      </Card>
+            <p className="mt-4 text-sm text-muted-foreground">
+              <LocalizedText>{t("notfound.description")}</LocalizedText>
+            </p>
+
+            <Link href="/">
+              <Button className="mt-4 w-full" data-testid="button-go-home">
+                <LocalizedText>{t("notfound.goHome")}</LocalizedText>
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </main>
     </div>
   );
 }

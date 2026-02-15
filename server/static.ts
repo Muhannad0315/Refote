@@ -12,8 +12,14 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // fall through to index.html for non-API routes so the SPA router can
+  // handle client-side routes. Allow API routes to pass through to server
+  // handlers by calling `next()`.
+  app.use("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) {
+      return next();
+    }
+
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
