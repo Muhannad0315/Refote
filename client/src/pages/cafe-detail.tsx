@@ -4,7 +4,7 @@ import { CheckInCard } from "@/components/check-in-card";
 import { Link } from "wouter";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { useI18n } from "@/lib/i18n";
-import { setSeoMeta } from "@/lib/seo";
+import { setSeoOverride } from "@/lib/seo";
 import type { Cafe } from "@shared/schema";
 import { Star, Coffee, ArrowLeft, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -38,20 +38,82 @@ export default function CafeDetail() {
     queryKey: ["/api/check-ins"],
   });
 
-  // SEO: update meta when cafe data becomes available. This effect is
-  // declared unconditionally so hook order remains stable across renders.
+  // SEO: update entity-level metadata when cafe data is available.
   useEffect(() => {
-    const cityName = language === "ar" ? cafe?.cityAr : cafe?.cityEn;
-    if (!cityName) return;
-    setSeoMeta({
-      title: t("seo.title.city").replace("{city}", cityName),
-      description: t("seo.description.city").replace("{city}", cityName),
-      keywords: `${t("seo.keywords.default")}, ${t("seo.keywords.city").replace(
-        "{city}",
-        cityName,
-      )}`,
+    if (!cafe) return;
+
+    const cafeName =
+      (language === "ar"
+        ? cafe.nameAr || cafe.nameEn
+        : cafe.nameEn || cafe.nameAr) || "Cafe";
+
+    const title = `${cafeName} – Reviews & Ratings | Refote`;
+    const description = `View ratings, drink reviews, and check-ins for ${cafeName} on Refote.`;
+
+    const canonicalUrl =
+      typeof window !== "undefined"
+        ? window.location.href
+        : `https://www.refote.com/cafe/${encodeURIComponent(id)}`;
+
+    const fallbackImage = "https://www.refote.com/android-chrome-512x512.png";
+    const rawImage = String((cafe as any).imageUrl || "").trim();
+    const hasStableAbsoluteImage =
+      !!rawImage &&
+      /^https?:\/\//i.test(rawImage) &&
+      !rawImage.includes("maps.googleapis.com");
+    const image = hasStableAbsoluteImage ? rawImage : fallbackImage;
+
+    const ratingValue = Number((cafe as any).rating);
+    const reviewCountValue = Number((cafe as any).reviews);
+    const hasAggregateRating =
+      Number.isFinite(ratingValue) &&
+      ratingValue > 0 &&
+      Number.isFinite(reviewCountValue) &&
+      reviewCountValue > 0;
+
+    const robots = "index,follow";
+    const jsonLd = robots.includes("noindex")
+      ? undefined
+      : [
+          hasAggregateRating
+            ? {
+                "@context": "https://schema.org",
+                "@type": "CafeOrCoffeeShop",
+                name: cafeName,
+                url: canonicalUrl,
+                image,
+                aggregateRating: {
+                  "@type": "AggregateRating",
+                  ratingValue,
+                  reviewCount: Math.trunc(reviewCountValue),
+                },
+              }
+            : {
+                "@context": "https://schema.org",
+                "@type": "CafeOrCoffeeShop",
+                name: cafeName,
+                url: canonicalUrl,
+              },
+        ];
+
+    setSeoOverride({
+      title,
+      description,
+      canonicalUrl,
+      robots,
+      openGraph: {
+        title,
+        description,
+        image,
+      },
+      twitter: {
+        title,
+        description,
+        image,
+      },
+      jsonLd,
     });
-  }, [cafe?.cityAr, cafe?.cityEn, language, t]);
+  }, [cafe, id, language]);
 
   if (isLoading)
     return (
