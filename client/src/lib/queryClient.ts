@@ -88,7 +88,6 @@ export async function apiRequest(
     // ignore if supabase not configured
   }
 
-
   const fullUrl =
     url.startsWith("http") || url.startsWith("/")
       ? url.startsWith("http")
@@ -192,17 +191,25 @@ export const getQueryFn: <T>(options: {
     }
   };
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+export function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        queryFn: getQueryFn({ on401: "throw" }),
+        refetchInterval: false,
+        refetchOnWindowFocus: false,
+        staleTime: Infinity,
+        retry: false,
+      },
+      mutations: {
+        retry: false,
+      },
     },
-    mutations: {
-      retry: false,
-    },
-  },
-});
+  });
+}
+
+export let queryClient = createQueryClient();
+
+export function setQueryClientInstance(client: QueryClient) {
+  queryClient = client;
+}

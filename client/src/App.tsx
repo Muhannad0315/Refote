@@ -1,13 +1,18 @@
 import { Switch, Route } from "wouter";
-import { queryClient, setSessionInvalidHandler } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  queryClient,
+  setQueryClientInstance,
+  setSessionInvalidHandler,
+} from "./lib/queryClient";
+import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import AuthForm from "./components/auth-form";
 import { SupabaseUnreachableBoundary } from "./components/supabase-unreachable-boundary";
-import React, { useState, useEffect, useLayoutEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import ReactHelmetAsync from "react-helmet-async/lib/index.js";
 // Note: AuthForm is used as the popup for both auth and account actions
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
@@ -18,8 +23,8 @@ import { BottomNav } from "@/components/bottom-nav";
 import LegalFooter from "@/components/LegalFooter";
 import { LocalizedText } from "@/components/LocalizedText";
 import {
-  HeadManager,
   SeoDefaults,
+  ensureSeoDocument,
   type SeoDocument,
   type SeoOverridePayload,
   normalizeCanonicalUrl,
@@ -44,6 +49,8 @@ import Settings from "@/pages/settings";
 import UserPage from "@/pages/user";
 import UserFollowers from "@/pages/user-followers";
 import UserFollowing from "@/pages/user-following";
+
+const { Helmet } = ReactHelmetAsync as any;
 
 function Router() {
   return (
@@ -313,17 +320,71 @@ function SeoProvider({ children }: { children: React.ReactNode }) {
   }, [pathname, t, language]);
 
   const finalDocument = useMemo(() => {
-    return mergeSeoDocument(baseDocument, override);
+    return ensureSeoDocument(mergeSeoDocument(baseDocument, override));
   }, [baseDocument, override]);
 
-  useLayoutEffect(() => {
-    HeadManager.apply(finalDocument);
-  }, [finalDocument]);
+  const shouldEmitJsonLd =
+    !finalDocument.robots.toLowerCase().includes("noindex") &&
+    Array.isArray(finalDocument.jsonLd);
 
-  return <>{children}</>;
+  return (
+    <>
+      <Helmet>
+        <title>{finalDocument.title}</title>
+        <meta name="description" content={finalDocument.description} />
+        <meta name="robots" content={finalDocument.robots} />
+
+        <link rel="canonical" href={finalDocument.canonicalUrl} />
+        {finalDocument.pagination?.prevUrl ? (
+          <link
+            rel="prev"
+            href={normalizeCanonicalUrl(finalDocument.pagination.prevUrl)}
+          />
+        ) : null}
+        {finalDocument.pagination?.nextUrl ? (
+          <link
+            rel="next"
+            href={normalizeCanonicalUrl(finalDocument.pagination.nextUrl)}
+          />
+        ) : null}
+
+        <meta property="og:title" content={finalDocument.openGraph.title} />
+        <meta
+          property="og:description"
+          content={finalDocument.openGraph.description}
+        />
+        <meta property="og:url" content={finalDocument.canonicalUrl} />
+        <meta property="og:type" content={finalDocument.openGraph.type} />
+        <meta
+          property="og:site_name"
+          content={finalDocument.openGraph.siteName}
+        />
+        <meta property="og:image" content={finalDocument.openGraph.image} />
+
+        <meta name="twitter:card" content={finalDocument.twitter.card} />
+        <meta name="twitter:title" content={finalDocument.twitter.title} />
+        <meta
+          name="twitter:description"
+          content={finalDocument.twitter.description}
+        />
+        <meta name="twitter:image" content={finalDocument.twitter.image} />
+
+        {shouldEmitJsonLd
+          ? finalDocument.jsonLd!.map((block, index) => (
+              <script
+                key={`jsonld-${index}`}
+                type="application/ld+json"
+                dangerouslySetInnerHTML={{ __html: JSON.stringify(block) }}
+              />
+            ))
+          : null}
+      </Helmet>
+      {children}
+    </>
+  );
 }
 
-function AuthOpener() {
+function AuthOpener({ queryClient }: { queryClient: QueryClient }) {
   const [showAuth, setShowAuth] = useState(false);
   const { user } = useAuth();
 
@@ -406,11 +467,21 @@ function AuthOpener() {
   );
 }
 
-function App() {
+function App({
+  queryClient: providedQueryClient,
+}: {
+  queryClient?: QueryClient;
+}) {
+  const activeQueryClient = providedQueryClient ?? queryClient;
+
+  // Ensure the module-level queryClient reference stays in sync with the
+  // instance used by the provider (important for SSR hydration).
+  setQueryClientInstance(activeQueryClient);
+
   return (
     <I18nProvider>
       <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
+        <QueryClientProvider client={activeQueryClient}>
           <SupabaseUnreachableBoundary>
             <TooltipProvider>
               <Toaster />
@@ -420,7 +491,7 @@ function App() {
                 {/* Top-right Signup/Login opener temporarily disabled; re-enable when needed */}
                 {/*
                 <div style={{ position: "fixed", top: 12, right: 12, zIndex: 60 }}>
-                  <AuthOpener />
+                  <AuthOpener queryClient={activeQueryClient} />
                 </div>
                 */}
                 <div

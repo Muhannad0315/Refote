@@ -55,11 +55,15 @@ const translations = {
     "discover.nearYou": "Near You",
     "discover.allCities": "All Cities",
     "discover.selectCity": "Select City",
-    "discover.locationRequired": "Location access is required to view nearby cafes.",
+    "discover.locationRequired":
+      "Location access is required to view nearby cafes.",
     "discover.enableLocation": "Enable Location",
-    "discover.locationDenied": "Location access is required to view nearby cafes.",
-    "discover.locationError": "Location access is required to view nearby cafes.",
-    "discover.locationEnabled": "Location access enabled. Showing nearby cafes.",
+    "discover.locationDenied":
+      "Location access is required to view nearby cafes.",
+    "discover.locationError":
+      "Location access is required to view nearby cafes.",
+    "discover.locationEnabled":
+      "Location access enabled. Showing nearby cafes.",
     "discover.noCafesFound": "No cafes found",
     "discover.cafesIn": "Cafes in",
     "discover.distance": "Search radius",
@@ -107,17 +111,23 @@ const translations = {
 
     // Landing page
     "home.hero.tagline": "Your next favorite cafe is waiting.",
-    "home.hero.description": "Discover cafes near you, explore coffee shops worldwide, check in your drinks, rate your favorite latte, espresso, cappuccino, or cold brew, and share tasting notes with fellow coffee lovers.",
+    "home.hero.description":
+      "Discover cafes near you, explore coffee shops worldwide, check in your drinks, rate your favorite latte, espresso, cappuccino, or cold brew, and share tasting notes with fellow coffee lovers.",
     "home.cta": "Discover Cafes Near You",
     "home.features.discover.title": "Discover Cafes",
-    "home.features.discover.description": "Find the best cafes near you or explore coffee shops in cities around the world.",
+    "home.features.discover.description":
+      "Find the best cafes near you or explore coffee shops in cities around the world.",
     "home.features.checkin.title": "Check In Drinks",
-    "home.features.checkin.description": "Log every coffee and tea you try. Keep track of your favorite drinks, from espresso to cold brew.",
+    "home.features.checkin.description":
+      "Log every coffee and tea you try. Keep track of your favorite drinks, from espresso to cold brew.",
     "home.features.rate.title": "Rate & Review",
-    "home.features.rate.description": "Rate your drinks, add tasting notes, and share your coffee reviews with the community.",
+    "home.features.rate.description":
+      "Rate your drinks, add tasting notes, and share your coffee reviews with the community.",
     "home.seo.title": "Refote – Discover Cafes, Coffee Shops & Drinks Near You",
-    "home.seo.description": "Refote helps you discover cafes near you, find the best coffee shops, check in drinks like latte, espresso, cappuccino, and cold brew, rate them, and share tasting notes.",
-    "home.seo.keywords": "coffee, cafe, cafes near me, best cafes near me, coffee shops, coffee drinks, latte, espresso, cappuccino, cold brew, discover cafes worldwide, coffee reviews, drink check-ins, tasting notes",
+    "home.seo.description":
+      "Refote helps you discover cafes near you, find the best coffee shops, check in drinks like latte, espresso, cappuccino, and cold brew, rate them, and share tasting notes.",
+    "home.seo.keywords":
+      "coffee, cafe, cafes near me, best cafes near me, coffee shops, coffee drinks, latte, espresso, cappuccino, cold brew, discover cafes worldwide, coffee reviews, drink check-ins, tasting notes",
 
     // Validation
     "validation.selectDrink": "Please select a drink",
@@ -760,17 +770,24 @@ const translations = {
 
     // Landing page
     "home.hero.tagline": "مقهاك المفضّل القادم بانتظارك.",
-    "home.hero.description": "اكتشف المقاهي القريبة منك، واستكشف محلات القهوة حول العالم، وسجّل مشروباتك، وقيّم اللاتيه والإسبريسو والكابتشينو والكولد برو المفضلة لديك، وشارك ملاحظات التذوق مع محبي القهوة.",
+    "home.hero.description":
+      "اكتشف المقاهي القريبة منك، واستكشف محلات القهوة حول العالم، وسجّل مشروباتك، وقيّم اللاتيه والإسبريسو والكابتشينو والكولد برو المفضلة لديك، وشارك ملاحظات التذوق مع محبي القهوة.",
     "home.cta": "اكتشف المقاهي القريبة منك",
     "home.features.discover.title": "اكتشف المقاهي",
-    "home.features.discover.description": "اعثر على أفضل المقاهي القريبة منك أو استكشف محلات القهوة في مدن حول العالم.",
+    "home.features.discover.description":
+      "اعثر على أفضل المقاهي القريبة منك أو استكشف محلات القهوة في مدن حول العالم.",
     "home.features.checkin.title": "سجّل مشروباتك",
-    "home.features.checkin.description": "سجّل كل قهوة وشاي تجربه. تابع مشروباتك المفضلة من الإسبريسو إلى الكولد برو.",
+    "home.features.checkin.description":
+      "سجّل كل قهوة وشاي تجربه. تابع مشروباتك المفضلة من الإسبريسو إلى الكولد برو.",
     "home.features.rate.title": "قيّم وراجع",
-    "home.features.rate.description": "قيّم مشروباتك، أضف ملاحظات التذوق، وشارك مراجعاتك مع المجتمع.",
-    "home.seo.title": "ريفوت – اكتشف المقاهي ومحلات القهوة والمشروبات القريبة منك",
-    "home.seo.description": "ريفوت يساعدك على اكتشاف المقاهي القريبة، والعثور على أفضل محلات القهوة، وتسجيل مشروباتك مثل اللاتيه والإسبريسو والكابتشينو والكولد برو، وتقييمها ومشاركة ملاحظات التذوق.",
-    "home.seo.keywords": "قهوة, مقهى, مقاهي قريبة, أفضل المقاهي, محلات قهوة, مشروبات قهوة, لاتيه, إسبريسو, كابتشينو, كولد برو, اكتشاف المقاهي, مراجعات القهوة, تسجيل المشروبات, ملاحظات التذوق",
+    "home.features.rate.description":
+      "قيّم مشروباتك، أضف ملاحظات التذوق، وشارك مراجعاتك مع المجتمع.",
+    "home.seo.title":
+      "ريفوت – اكتشف المقاهي ومحلات القهوة والمشروبات القريبة منك",
+    "home.seo.description":
+      "ريفوت يساعدك على اكتشاف المقاهي القريبة، والعثور على أفضل محلات القهوة، وتسجيل مشروباتك مثل اللاتيه والإسبريسو والكابتشينو والكولد برو، وتقييمها ومشاركة ملاحظات التذوق.",
+    "home.seo.keywords":
+      "قهوة, مقهى, مقاهي قريبة, أفضل المقاهي, محلات قهوة, مشروبات قهوة, لاتيه, إسبريسو, كابتشينو, كولد برو, اكتشاف المقاهي, مراجعات القهوة, تسجيل المشروبات, ملاحظات التذوق",
 
     // Policies (Arabic)
     "nav.privacy": "سياسة الخصوصية",
@@ -918,12 +935,20 @@ const translations = {
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 function getDefaultLanguage(): Language {
-  const stored = localStorage.getItem("language") as Language;
-  if (stored === "ar" || stored === "en") {
-    return stored;
+  if (typeof window === "undefined") {
+    return "en";
   }
 
-  const browserLang = navigator.language.toLowerCase();
+  try {
+    const stored = window.localStorage.getItem("language") as Language;
+    if (stored === "ar" || stored === "en") {
+      return stored;
+    }
+  } catch (_err) {
+    // Ignore storage access errors in non-browser contexts
+  }
+
+  const browserLang = (window.navigator.language || "").toLowerCase();
   if (browserLang.startsWith("ar")) {
     return "ar";
   }

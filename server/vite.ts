@@ -4,7 +4,7 @@ import { type Server } from "http";
 import viteConfig from "../vite.config";
 import fs from "fs";
 import path from "path";
-import { nanoid } from "nanoid";
+import { type DehydratedState } from "@tanstack/react-query";
 
 const viteLogger = createLogger();
 
@@ -42,13 +42,48 @@ export async function setupVite(server: Server, app: Express) {
         "index.html",
       );
 
-      // always reload the index.html file from disk incase it changes
+      // always reload the index.html file from disk in case it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`,
-      );
-      const page = await vite.transformIndexHtml(url, template);
+      template = await vite.transformIndexHtml(url, template);
+
+      const { render } = (await vite.ssrLoadModule("/entry-server.tsx")) as {
+        render: (
+          url: string,
+          options?: { origin?: string },
+        ) => Promise<{
+          appHtml: string;
+          dehydratedState?: DehydratedState | null;
+          helmet?: {
+            title?: string;
+            meta?: string;
+            link?: string;
+            script?: string;
+          };
+        }>;
+      };
+
+      const origin = `${req.protocol}://${req.get("host")}`;
+      const rendered = await render(url, { origin });
+
+      const appHtml = rendered?.appHtml ?? "";
+      const helmet = rendered?.helmet ?? {
+        title: "",
+        meta: "",
+        link: "",
+        script: "",
+      };
+      const stateJson = JSON.stringify(
+        rendered?.dehydratedState ?? null,
+      ).replace(/</g, "\\u003c");
+      const stateScript = `window.__REACT_QUERY_STATE__=${stateJson};`;
+
+      const page = template
+        .replace("<!--helmet-title-->", helmet.title || "")
+        .replace("<!--helmet-meta-->", helmet.meta || "")
+        .replace("<!--helmet-link-->", helmet.link || "")
+        .replace("<!--helmet-script-->", helmet.script || "")
+        .replace("<!--app-html-->", appHtml)
+        .replace("<!--react-query-state-->", stateScript || "");
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
     } catch (e) {
       vite.ssrFixStacktrace(e as Error);
