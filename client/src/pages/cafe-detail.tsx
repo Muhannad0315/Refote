@@ -74,6 +74,11 @@ export default function CafeDetail() {
     /^https?:\/\//i.test(rawImage) &&
     !rawImage.includes("maps.googleapis.com");
   const image = hasStableAbsoluteImage ? rawImage : fallbackImage;
+  const cafeImageSrc = cafe.imageUrl
+    ? cafe.imageUrl.includes("maps.googleapis.com")
+      ? `/api/proxy?url=${encodeURIComponent(cafe.imageUrl)}`
+      : cafe.imageUrl
+    : null;
 
   const ratingValue = Number((cafe as any).rating);
   const reviewCountValue = Number((cafe as any).reviews);
@@ -126,6 +131,14 @@ export default function CafeDetail() {
         <meta name="twitter:title" content={title} />
         <meta name="twitter:description" content={description} />
         <meta name="twitter:image" content={image} />
+        {cafeImageSrc && (
+          <link
+            rel="preload"
+            as="image"
+            href={cafeImageSrc}
+            fetchPriority="high"
+          />
+        )}
         {jsonLd && (
           <script type="application/ld+json">{JSON.stringify(jsonLd)}</script>
         )}
@@ -146,13 +159,14 @@ export default function CafeDetail() {
               <div className="relative w-32 h-32 flex-shrink-0 rounded-lg overflow-hidden bg-muted">
                 {cafe.imageUrl ? (
                   <img
-                    src={
-                      cafe.imageUrl.includes("maps.googleapis.com")
-                        ? `/api/proxy?url=${encodeURIComponent(cafe.imageUrl)}`
-                        : cafe.imageUrl
-                    }
+                    src={cafeImageSrc ?? undefined}
                     alt={name}
                     className="w-full h-full object-cover"
+                    loading="eager"
+                    fetchPriority="high"
+                    decoding="async"
+                    width={128}
+                    height={128}
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/5">
