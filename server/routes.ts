@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { Readable } from "stream";
 import { storage } from "./storage";
 import {
   insertCheckInSchema,
@@ -3262,10 +3263,12 @@ export async function registerRoutes(
       if (!fetched.ok)
         return res.status(502).json({ error: "Failed to fetch image" });
       const contentType = fetched.headers.get("content-type") || "image/jpeg";
-      const arrayBuffer = await fetched.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
       res.setHeader("content-type", contentType);
-      res.send(buffer);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      if (!fetched.body) {
+        return res.status(502).json({ error: "Image stream unavailable" });
+      }
+      Readable.fromWeb(fetched.body as any).pipe(res);
     } catch (error) {
       res.status(500).json({ error: "Proxy error" });
     }
@@ -3308,14 +3311,15 @@ export async function registerRoutes(
         return res.status(502).json({ error: "Failed to fetch photo" });
 
       const contentType = fetched.headers.get("content-type") || "image/jpeg";
-      const arrayBuffer = await fetched.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
 
-      // Encourage browsers and CDNs to cache the image for 24 hours to reduce
+      // Encourage browsers and CDNs to cache the image for 1 year to reduce
       // repeated bandwidth and Google API calls.
       res.setHeader("content-type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      res.send(buffer);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      if (!fetched.body) {
+        return res.status(502).json({ error: "Photo stream unavailable" });
+      }
+      Readable.fromWeb(fetched.body as any).pipe(res);
     } catch (error) {
       res.status(500).json({ error: "Photo proxy error" });
     }

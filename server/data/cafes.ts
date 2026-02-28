@@ -177,11 +177,11 @@ export async function getCafeById(
         dbRow && dbRow.photo_reference
           ? `/api/photo?photoRef=${encodeURIComponent(
               dbRow.photo_reference,
-            )}&maxWidth=1000`
+            )}&maxWidth=400`
           : localByPlace && (localByPlace as any).photoReference
           ? `/api/photo?photoRef=${encodeURIComponent(
               (localByPlace as any).photoReference,
-            )}&maxWidth=1000`
+            )}&maxWidth=400`
           : (localByPlace && (localByPlace as any).imageUrl) ?? null;
       const rating =
         typeof (dbRow && (dbRow as any).rating) === "number"
@@ -250,11 +250,11 @@ export async function getCafeById(
       dbRow && dbRow.photo_reference
         ? `/api/photo?photoRef=${encodeURIComponent(
             dbRow.photo_reference,
-          )}&maxWidth=1000`
+          )}&maxWidth=400`
         : localByPlace && (localByPlace as any).photoReference
         ? `/api/photo?photoRef=${encodeURIComponent(
             (localByPlace as any).photoReference,
-          )}&maxWidth=1000`
+          )}&maxWidth=400`
         : (localByPlace && (localByPlace as any).imageUrl) ?? null;
     const rating =
       typeof (dbRow && dbRow.rating) === "number"
