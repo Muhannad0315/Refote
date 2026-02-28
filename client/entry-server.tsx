@@ -14,6 +14,7 @@ import {
   createQueryClient,
   setQueryClientInstance,
 } from "./src/lib/queryClient";
+import { getCafeById } from "../server/data/cafes";
 
 const { HelmetProvider } = ReactHelmetAsync as any;
 
@@ -41,14 +42,8 @@ async function prefetchForUrl(
     const cafeId = cafeMatch[1];
     const lang = "en";
     try {
-      const apiUrl = `${origin}/api/cafes/${encodeURIComponent(
-        cafeId,
-      )}?lang=${lang}`;
-      const res = await fetch(apiUrl);
-      if (res.ok) {
-        const data = await res.json();
-        queryClient.setQueryData(["/api/cafes", cafeId, lang], data);
-      }
+      const data = await getCafeById(cafeId, lang);
+      queryClient.setQueryData(["/api/cafes", cafeId, lang], data);
     } catch (_err) {
       // Ignore fetch failures during SSR prefetch; client will retry as needed.
     }

@@ -20,6 +20,7 @@ import {
 } from "./nearbySearchCache";
 import { SEARCH_RADIUS_METERS, SEARCH_RADIUS_SOURCE } from "./searchConstants";
 import { CAFE_DISCOVER_SELECT, CAFE_DETAIL_SELECT } from "./db/selects";
+import { getCafeById } from "./data/cafes";
 import {
   loadDiscoverConfig,
   logDiscoverConfig,
@@ -801,18 +802,18 @@ export async function registerRoutes(
           tastingNotes: Array.isArray(r.tasting_notes)
             ? r.tasting_notes
             : r.tasting_notes
-              ? (() => {
-                  try {
-                    const parsed =
-                      typeof r.tasting_notes === "string"
-                        ? JSON.parse(r.tasting_notes)
-                        : r.tasting_notes;
-                    return Array.isArray(parsed) ? parsed : [];
-                  } catch {
-                    return [];
-                  }
-                })()
-              : [],
+            ? (() => {
+                try {
+                  const parsed =
+                    typeof r.tasting_notes === "string"
+                      ? JSON.parse(r.tasting_notes)
+                      : r.tasting_notes;
+                  return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                  return [];
+                }
+              })()
+            : [],
           createdAt: r.created_at ? new Date(r.created_at) : new Date(),
           user,
           likesCount: 0,
@@ -1014,13 +1015,13 @@ export async function registerRoutes(
                 const cityEn = r.city_en ?? null;
                 const cityAr = r.city_ar ?? null;
                 const displayName =
-                  lang === "ar" ? (nameAr ?? nameEn) : (nameEn ?? nameAr);
+                  lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
                 const displayAddress =
                   lang === "ar"
-                    ? (addressAr ?? addressEn)
-                    : (addressEn ?? addressAr);
+                    ? addressAr ?? addressEn
+                    : addressEn ?? addressAr;
                 const displayCity =
-                  lang === "ar" ? (cityAr ?? cityEn) : (cityEn ?? cityAr);
+                  lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
                 const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
                 return {
                   id: r.id ?? null,
@@ -1714,13 +1715,11 @@ export async function registerRoutes(
             const cityEn = r.city_en ?? null;
             const cityAr = r.city_ar ?? null;
             const displayName =
-              lang === "ar" ? (nameAr ?? nameEn) : (nameEn ?? nameAr);
+              lang === "ar" ? nameAr ?? nameEn : nameEn ?? nameAr;
             const displayAddress =
-              lang === "ar"
-                ? (addressAr ?? addressEn)
-                : (addressEn ?? addressAr);
+              lang === "ar" ? addressAr ?? addressEn : addressEn ?? addressAr;
             const displayCity =
-              lang === "ar" ? (cityAr ?? cityEn) : (cityEn ?? cityAr);
+              lang === "ar" ? cityAr ?? cityEn : cityEn ?? cityAr;
             const distMeters = haversineDistance(lat, lng, r.lat, r.lng);
             return {
               id: r.id ?? null,
@@ -1778,332 +1777,11 @@ export async function registerRoutes(
   app.get("/api/cafes/:id", async (req, res) => {
     try {
       const id = req.params.id;
-      // Try local cafe first
-      const cafe = await storage.getCafe(id);
-      if (cafe) {
-        // Compute top drinks using SQL aggregation (avg_rating, min 3 check-ins)
-        let topDrinks: Array<{
-          drinkId: string;
-          drinkName: string;
-          avgRating: number;
-          count: number;
-        }> = [];
-
-        try {
-          const { createServerSupabaseClient } = await import(
-            "./supabaseClient"
-          );
-          const supabase = createServerSupabaseClient();
-
-          // Aggregate check_ins by drink_id for this cafe, join with drinks table
-          const { data: aggData, error: aggErr } = await supabase.rpc(
-            "get_top_drinks_for_cafe",
-            {
-              p_place_id: cafe.id,
-              min_check_ins: 1,
-              max_results: 3,
-            },
-          );
-
-          if (!aggErr && aggData) {
-            topDrinks = aggData.map((row: any) => ({
-              drinkId: row.drink_id,
-              drinkName: row.drink_name,
-              avgRating: parseFloat(row.avg_rating),
-              count: parseInt(row.check_in_count, 10),
-            }));
-
-            // removed noisy log to prevent repeated terminal spam
-          }
-        } catch (e) {
-          console.error("Failed to compute top drinks:", e);
-          topDrinks = [];
-        }
-
-        // Ensure we return authoritative rating/reviews from the DB when
-        // this is a locally persisted cafe (storage.getCafe returned a row).
-        let dbRow: any = null;
-        try {
-          const { createServerSupabaseClient } = await import(
-            "./supabaseClient"
-          );
-          const supabase = createServerSupabaseClient();
-          const { data: rows, error } = await supabase
-            .from("coffee_places")
-            .select("rating, reviews")
-            .eq("id", cafe.id)
-            .limit(1);
-          if (!error) dbRow = Array.isArray(rows) ? rows[0] : rows;
-        } catch (_) {
-          // ignore DB read failures and fall back to in-memory `cafe` fields
-        }
-
-        const rating =
-          dbRow && typeof dbRow.rating === "number"
-            ? dbRow.rating
-            : (cafe.rating ?? null);
-        const reviews =
-          dbRow && typeof dbRow.reviews === "number"
-            ? dbRow.reviews
-            : (cafe.reviews ?? null);
-
-        return res.json({ ...cafe, rating, reviews, topDrinks });
-      }
-
-      // Not a local cafe id — treat `id` as a Google Place ID. Before calling
-      // Google Place Details, check local storage (Supabase) for an existing
-      // cafe that references this place ID and whether the detail fields are
-      // present. Place Details must be fetched only when detail fields are
-      // missing; Discover must never call Place Details.
-      const apiKey = process.env.GOOGLE_API_KEY as string;
       const lang = (req.query.lang as string) === "ar" ? "ar" : "en";
-
-      // look for a local cafe that references this Google place id
-      const localCafesAll = await storage.getCafes();
-      const localByPlace = localCafesAll.find(
-        (c: any) => c.placeId === id || (c as any).google_place_id === id,
-      );
-
-      // If we have a local record, read authoritative DB row to inspect
-      // which detail fields are missing. (Log Supabase reads.)
-      let dbRow: any = null;
-      if (localByPlace) {
-        try {
-          console.log("[supabase] read coffee_places for detail check", {
-            google_place_id: id,
-          });
-        } catch (_) {}
-        const { createServerSupabaseClient } = await import("./supabaseClient");
-        const supabase = createServerSupabaseClient();
-        const { data: dbRows, error: dbErr } = await supabase
-          .from("coffee_places")
-          .select(
-            "address_en, address_ar, phone_number, website, opening_hours, types, price_level, last_fetched_at, name_en, name_ar, lat, lng, photo_reference, rating, reviews",
-          )
-          .eq("google_place_id", id)
-          .limit(1);
-        if (dbErr) console.error("[supabase] read error", dbErr);
-        dbRow = Array.isArray(dbRows) ? dbRows[0] : dbRows;
-      }
-
-      // Determine if detail fields are missing — if so, we must call Place Details.
-      const detailFieldsToCheck = [
-        "address_en",
-        "phone_number",
-        "website",
-        "opening_hours",
-        "types",
-        "price_level",
-      ];
-      const missingDetail =
-        dbRow == null || detailFieldsToCheck.some((k) => !(dbRow as any)[k]);
-
-      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-      if (localByPlace && !missingDetail) {
-        const lastFetched = (dbRow as any)?.last_fetched_at as number | null;
-        if (lastFetched && Date.now() - lastFetched < THIRTY_DAYS_MS) {
-          // Use stored data — DO NOT call Google Place Details.
-          let topDrinks: Array<{
-            drinkId: string;
-            drinkName: string;
-            avgRating: number;
-            count: number;
-          }> = [];
-
-          try {
-            const { createServerSupabaseClient } = await import(
-              "./supabaseClient"
-            );
-            const supabase = createServerSupabaseClient();
-
-            const { data: aggData, error: aggErr } = await supabase.rpc(
-              "get_top_drinks_for_cafe",
-              {
-                p_place_id: localByPlace.id,
-                min_check_ins: 1,
-                max_results: 3,
-              },
-            );
-
-            if (!aggErr && aggData) {
-              topDrinks = aggData.map((row: any) => ({
-                drinkId: row.drink_id,
-                drinkName: row.drink_name,
-                avgRating: parseFloat(row.avg_rating),
-                count: parseInt(row.check_in_count, 10),
-              }));
-
-              // removed noisy log to prevent repeated terminal spam
-            }
-          } catch (e) {
-            console.error("Failed to compute top drinks:", e);
-            topDrinks = [];
-          }
-
-          const nameEn =
-            (dbRow && (dbRow.name_en ?? dbRow.name_ar)) ??
-            (localByPlace &&
-              ((localByPlace as any).nameEn ?? (localByPlace as any).nameAr)) ??
-            null;
-          const nameAr =
-            (dbRow && (dbRow.name_ar ?? dbRow.name_en)) ??
-            (localByPlace &&
-              ((localByPlace as any).nameAr ?? (localByPlace as any).nameEn)) ??
-            null;
-          const imageUrl =
-            dbRow && dbRow.photo_reference
-              ? `/api/photo?photoRef=${encodeURIComponent(
-                  dbRow.photo_reference,
-                )}&maxWidth=1000`
-              : localByPlace && (localByPlace as any).photoReference
-                ? `/api/photo?photoRef=${encodeURIComponent(
-                    (localByPlace as any).photoReference,
-                  )}&maxWidth=1000`
-                : ((localByPlace && (localByPlace as any).imageUrl) ?? null);
-          const rating =
-            typeof (dbRow && (dbRow as any).rating) === "number"
-              ? (dbRow as any).rating
-              : typeof (localByPlace && (localByPlace as any).rating) ===
-                  "number"
-                ? (localByPlace as any).rating
-                : null;
-          const reviews =
-            typeof (dbRow && (dbRow as any).reviews) === "number"
-              ? (dbRow as any).reviews
-              : typeof (localByPlace && (localByPlace as any).reviews) ===
-                  "number"
-                ? (localByPlace as any).reviews
-                : null;
-
-          return res.json({
-            id: localByPlace?.placeId ?? id,
-            placeId: localByPlace?.placeId ?? id,
-            nameEn,
-            nameAr,
-            imageUrl,
-            rating,
-            reviews,
-            topDrinks,
-          });
-        }
-      }
-
-      // Place Details calls removed: rely on local/cache data only.
-      try {
-        // look for a local cafe that references this Google place id
-        const localCafesAll = await storage.getCafes();
-        const localByPlace = localCafesAll.find(
-          (c: any) => c.placeId === id || (c as any).google_place_id === id,
-        );
-
-        let dbRow: any = null;
-        if (localByPlace) {
-          try {
-            const { createServerSupabaseClient } = await import(
-              "./supabaseClient"
-            );
-            const supabase = createServerSupabaseClient();
-            const { data: dbRows, error: dbErr } = await supabase
-              .from("coffee_places")
-              .select("name_en, name_ar, photo_reference, rating, reviews")
-              .eq("google_place_id", id)
-              .limit(1);
-            if (dbErr) console.error("[supabase] read error", dbErr);
-            dbRow = Array.isArray(dbRows) ? dbRows[0] : dbRows;
-          } catch (e) {
-            console.error("[supabase] read failed", e);
-          }
-        }
-
-        // Compute topDrinks from local check-ins referencing this place
-        let topDrinks: Array<{
-          drinkId: string;
-          drinkName: string;
-          avgRating: number;
-          count: number;
-        }> = [];
-
-        if (localByPlace) {
-          try {
-            const { createServerSupabaseClient } = await import(
-              "./supabaseClient"
-            );
-            const supabase = createServerSupabaseClient();
-
-            const { data: aggData, error: aggErr } = await supabase.rpc(
-              "get_top_drinks_for_cafe",
-              {
-                p_place_id: localByPlace.id,
-                min_check_ins: 1,
-                max_results: 3,
-              },
-            );
-
-            if (!aggErr && aggData) {
-              topDrinks = aggData.map((row: any) => ({
-                drinkId: row.drink_id,
-                drinkName: row.drink_name,
-                avgRating: parseFloat(row.avg_rating),
-                count: parseInt(row.check_in_count, 10),
-              }));
-
-              // removed noisy log to prevent repeated terminal spam
-            }
-          } catch (e) {
-            console.error("Failed to compute top drinks:", e);
-            topDrinks = [];
-          }
-        }
-
-        const nameEn =
-          (dbRow && (dbRow.name_en ?? dbRow.name_ar)) ??
-          (localByPlace &&
-            ((localByPlace as any).nameEn ?? (localByPlace as any).nameAr)) ??
-          null;
-        const nameAr =
-          (dbRow && (dbRow.name_ar ?? dbRow.name_en)) ??
-          (localByPlace &&
-            ((localByPlace as any).nameAr ?? (localByPlace as any).nameEn)) ??
-          null;
-        const imageUrl =
-          dbRow && dbRow.photo_reference
-            ? `/api/photo?photoRef=${encodeURIComponent(
-                dbRow.photo_reference,
-              )}&maxWidth=1000`
-            : localByPlace && (localByPlace as any).photoReference
-              ? `/api/photo?photoRef=${encodeURIComponent(
-                  (localByPlace as any).photoReference,
-                )}&maxWidth=1000`
-              : ((localByPlace && (localByPlace as any).imageUrl) ?? null);
-        const rating =
-          typeof (dbRow && dbRow.rating) === "number"
-            ? dbRow.rating
-            : typeof (localByPlace && (localByPlace as any).rating) === "number"
-              ? (localByPlace as any).rating
-              : null;
-        const reviews =
-          typeof (dbRow && dbRow.reviews) === "number"
-            ? dbRow.reviews
-            : typeof (localByPlace && (localByPlace as any).reviews) ===
-                "number"
-              ? (localByPlace as any).reviews
-              : null;
-
-        return res.json({
-          id: localByPlace?.placeId ?? id,
-          placeId: localByPlace?.placeId ?? id,
-          nameEn,
-          nameAr,
-          imageUrl,
-          rating,
-          reviews,
-          topDrinks,
-        });
-      } catch (err) {
-        console.error("Cafe detail local fetch failed:", err);
-        return res.status(500).json({ error: "Failed to fetch cafe" });
-      }
+      const cafe = await getCafeById(id, lang);
+      return res.json(cafe);
     } catch (error) {
+      console.error("Cafe detail fetch failed:", error);
       res.status(500).json({ error: "Failed to fetch cafe" });
     }
   });
@@ -3443,8 +3121,8 @@ export async function registerRoutes(
         const reviews = Array.isArray(p.reviews)
           ? p.reviews.length
           : typeof p.userRatingsTotal === "number"
-            ? p.userRatingsTotal
-            : null;
+          ? p.userRatingsTotal
+          : null;
 
         // Location: flexible access
         let latitude: number | null = null;
