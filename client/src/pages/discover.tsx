@@ -29,8 +29,11 @@ import {
 import type { Cafe, CafeWithDistance } from "@shared/schema";
 // city translations removed — filters not used
 
+const isBrowser = typeof window !== "undefined";
+
 // Detect US locale; all others default to metric
 const isUSLocale = () => {
+  if (!isBrowser || typeof navigator === "undefined") return false;
   const lang = navigator.language || "en";
   return lang.toLowerCase().startsWith("en-us");
 };
@@ -66,7 +69,8 @@ export default function Discover() {
   // Initialize radius from localStorage or use default
   // Only accept stored values if they match current DISTANCE_OPTIONS
   const [radiusMeters, setRadiusMeters] = useState<number>(() => {
-    const stored = localStorage.getItem("discover-radius");
+    if (!isBrowser) return getDefaultRadius();
+    const stored = window.localStorage.getItem("discover-radius");
     if (stored) {
       const parsed = parseInt(stored, 10);
       // Only use stored value if it's a valid option in current DISTANCE_OPTIONS
@@ -74,14 +78,15 @@ export default function Discover() {
         return parsed;
       }
       // Clear invalid stored value
-      localStorage.removeItem("discover-radius");
+      window.localStorage.removeItem("discover-radius");
     }
     return getDefaultRadius();
   });
 
   // Persist radius to localStorage when it changes
   useEffect(() => {
-    localStorage.setItem("discover-radius", String(radiusMeters));
+    if (!isBrowser) return;
+    window.localStorage.setItem("discover-radius", String(radiusMeters));
   }, [radiusMeters]);
 
   // Compute a coarse location cell for caching/de-duplication. The server
