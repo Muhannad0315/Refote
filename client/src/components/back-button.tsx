@@ -24,7 +24,7 @@ export function BackButton({ href, onClick, testId }: BackButtonProps) {
       size="sm"
       onClick={onClick}
       data-testid={testId || "button-back"}
-      className="inline-flex items-center gap-2 cursor-pointer text-white"
+      className="inline-flex items-center gap-2 cursor-pointer text-foreground"
     >
       {arrow}
       <span>
@@ -38,7 +38,7 @@ export function BackButton({ href, onClick, testId }: BackButtonProps) {
       <div className="flex items-center justify-start">
         {href ? (
           <Link href={href}>
-            <a className="inline-flex items-center gap-2 text-sm text-white cursor-pointer">
+            <a className="inline-flex items-center gap-2 text-sm text-foreground cursor-pointer">
               {arrow}
               <span>
                 <LocalizedText>{t("common.back")}</LocalizedText>
